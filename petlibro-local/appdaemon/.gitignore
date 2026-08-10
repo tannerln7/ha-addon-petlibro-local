@@ -1,0 +1,12 @@
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+
+# Local AppDaemon configuration may contain a feeder serial and LAN endpoints.
+src/apps.yaml
+
+# Protocol captures can contain MQTT credentials, device identifiers, and LAN data.
+capture/
+*.pcap
+*.pcapng

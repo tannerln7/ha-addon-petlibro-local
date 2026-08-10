@@ -1,0 +1,33 @@
+services:
+  petlibro-local:
+    build:
+      context: ../petlibro-local
+      args:
+        BUILD_ARCH: amd64
+        BUILD_VERSION: local
+    image: petlibro-local:local
+    container_name: petlibro-local
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      MQTT_HOST: ${MQTT_HOST:-192.168.1.10}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      DEVICE_IP: ${DEVICE_IP:-192.168.1.100}
+      PRODUCT: ${PRODUCT:-PLAF203}
+      SERIAL: ${SERIAL:-YOUR_DEVICE_SERIAL}
+      UID: ${UID:-YOUR_DEVICE_UID}
+      PRODUCT_SECRET: ${PRODUCT_SECRET:-}
+      GO2RTC_STREAM_NAME: ${GO2RTC_STREAM_NAME:-petlibro_feeder}
+      CAMERA_QUALITY: ${CAMERA_QUALITY:-hd}
+      ACK_MODE: ${ACK_MODE:-hybrid}
+      SEND_DELAY_CTRL: ${SEND_DELAY_CTRL:-1}
+      HD_PROBE_WAIT_MS: ${HD_PROBE_WAIT_MS:-15000}
+      GO2RTC_API_PORT: ${GO2RTC_API_PORT:-1984}
+      GO2RTC_RTSP_PORT: ${GO2RTC_RTSP_PORT:-8554}
+      GO2RTC_WEBRTC_PORT: ${GO2RTC_WEBRTC_PORT:-8555}
+      VERBOSE_LOGS: ${VERBOSE_LOGS:-0}
+      ENABLE_DEBUG_DUMPS: ${ENABLE_DEBUG_DUMPS:-0}
+    volumes:
+      - ./data:/data

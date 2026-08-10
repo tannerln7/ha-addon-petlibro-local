@@ -1,0 +1,2 @@
+AppDaemon>=4.5,<5
+pytest>=8,<10

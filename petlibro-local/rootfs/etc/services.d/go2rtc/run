@@ -1,0 +1,9 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+set -euo pipefail
+
+/usr/local/bin/petlibro-local-run go2rtc
+unset MQTT_PASSWORD PRODUCT_SECRET
+
+bashio::log.info "Starting patched go2rtc service"
+exec /usr/local/bin/go2rtc -config /data/go2rtc.yaml

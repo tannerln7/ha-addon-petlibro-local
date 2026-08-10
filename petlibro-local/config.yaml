@@ -1,0 +1,63 @@
+name: Petlibro Local backend
+version: "0.1.0"
+slug: petlibro_local
+description: Local PLAF203 MQTT control and camera streaming backend
+arch:
+  - amd64
+startup: application
+boot: auto
+stage: experimental
+init: false
+host_network: true
+webui: http://[HOST]:[PORT:1984]/
+watchdog: http://[HOST]:[PORT:1984]/
+ports:
+  1984/tcp: 1984
+  8554/tcp: 8554
+  8555/tcp: 8555
+  8555/udp: 8555
+ports_description:
+  1984/tcp: go2rtc web interface and API
+  8554/tcp: go2rtc RTSP server
+  8555/tcp: go2rtc WebRTC TCP transport
+  8555/udp: go2rtc WebRTC UDP transport
+options:
+  mqtt_host: core-mosquitto
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
+  device_ip: ""
+  product: PLAF203
+  serial: ""
+  uid: ""
+  product_secret: ""
+  go2rtc_stream_name: petlibro_feeder
+  camera_quality: hd
+  ack_mode: hybrid
+  send_delay_ctrl: true
+  hd_probe_wait_ms: 15000
+  go2rtc_api_port: 1984
+  go2rtc_rtsp_port: 8554
+  go2rtc_webrtc_port: 8555
+  verbose_logs: false
+  enable_debug_dumps: false
+schema:
+  mqtt_host: str
+  mqtt_port: port
+  mqtt_username: str
+  mqtt_password: password
+  device_ip: str
+  product: list(PLAF203)
+  serial: str
+  uid: str
+  product_secret: password
+  go2rtc_stream_name: str
+  camera_quality: list(hd|sd)
+  ack_mode: list(high|contig|hybrid)
+  send_delay_ctrl: bool
+  hd_probe_wait_ms: int(0,60000)
+  go2rtc_api_port: port
+  go2rtc_rtsp_port: port
+  go2rtc_webrtc_port: port
+  verbose_logs: bool
+  enable_debug_dumps: bool

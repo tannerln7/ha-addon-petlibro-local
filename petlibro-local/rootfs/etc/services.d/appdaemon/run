@@ -1,0 +1,14 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+set -euo pipefail
+
+/usr/local/bin/petlibro-local-run appdaemon
+unset MQTT_PASSWORD PRODUCT_SECRET
+
+arguments=(-c /data)
+if [[ -f /data/.verbose_logs ]]; then
+    arguments+=(-D DEBUG)
+fi
+
+bashio::log.info "Starting PLAF203 AppDaemon controller"
+exec /opt/appdaemon-venv/bin/appdaemon "${arguments[@]}"

@@ -1,0 +1,20 @@
+secrets: /data/appdaemon-secrets.yaml
+
+appdaemon:
+  time_zone: UTC
+  latitude: 0
+  longitude: 0
+  elevation: 0
+  app_dir: /data/appdaemon/apps
+  namespaces:
+    plaf203:
+      writeback: safe
+  plugins:
+    MQTT:
+      type: mqtt
+      namespace: mqtt
+      client_host: ${MQTT_HOST}
+      client_port: ${MQTT_PORT}
+      client_user: !secret mqtt_username
+      client_password: !secret mqtt_password
+      force_start: true

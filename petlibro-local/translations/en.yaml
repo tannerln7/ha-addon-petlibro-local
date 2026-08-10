@@ -1,0 +1,63 @@
+configuration:
+  mqtt_host:
+    name: MQTT host
+    description: Hostname or address of the broker used by the feeder and backend.
+  mqtt_port:
+    name: MQTT port
+    description: TCP port of the MQTT broker.
+  mqtt_username:
+    name: MQTT username
+    description: Optional username used by AppDaemon to connect to the broker.
+  mqtt_password:
+    name: MQTT password
+    description: Optional password used by AppDaemon to connect to the broker.
+  device_ip:
+    name: Device IP
+    description: LAN address of the PLAF203 feeder camera.
+  product:
+    name: Product
+    description: Supported Petlibro product family.
+  serial:
+    name: Device serial
+    description: Feeder DL_DEVICE_ID used in MQTT topics.
+  uid:
+    name: Camera UID
+    description: Exact 20-character UID used for the local camera session.
+  product_secret:
+    name: Product secret
+    description: Reserved for future provisioning and not used by this release.
+  go2rtc_stream_name:
+    name: Stream name
+    description: Name used in go2rtc and RTSP URLs.
+  camera_quality:
+    name: Camera quality
+    description: Request the HD or SD video stream.
+  ack_mode:
+    name: ACK mode
+    description: Petlibro camera media-window ACK mapping.
+  send_delay_ctrl:
+    name: Send delay control
+    description: Send the AVAPI data-delay control before starting media.
+  hd_probe_wait_ms:
+    name: HD probe wait
+    description: Milliseconds to wait for a higher-resolution SPS.
+  go2rtc_api_port:
+    name: go2rtc API port
+    description: TCP port for the go2rtc web interface and API.
+  go2rtc_rtsp_port:
+    name: RTSP port
+    description: TCP port for RTSP playback.
+  go2rtc_webrtc_port:
+    name: WebRTC port
+    description: TCP and UDP port for WebRTC transport.
+  verbose_logs:
+    name: Verbose logs
+    description: Enable detailed Petlibro and AppDaemon diagnostics.
+  enable_debug_dumps:
+    name: Debug dumps
+    description: Write decrypted protocol dumps to persistent add-on data.
+network:
+  1984/tcp: go2rtc web interface and API
+  8554/tcp: RTSP server
+  8555/tcp: WebRTC TCP transport
+  8555/udp: WebRTC UDP transport

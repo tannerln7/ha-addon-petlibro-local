@@ -1,0 +1,62 @@
+# Copy this file to go2rtc.yaml for local use. The local go2rtc.yaml file is
+# intentionally ignored so camera addresses, UIDs, and credentials are not
+# committed.
+
+log:
+  level: info
+  # Set the Petlibro package to debug to see bootstrap and probe diagnostics.
+  # Add verbose=1 to a stream URL for periodic health and ACK-window summaries.
+  petlibro: debug
+
+streams:
+  # Replace the example address and 20-character UID with values from your
+  # feeder. The legacy stream-control variant is the default and is the path
+  # currently known to transition from the startup SD stream to HD.
+  petlibro_feeder: petlibro://192.168.1.42?uid=PLAF20300000000ABCD0&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000
+
+  # Host discovery is also supported. Provide the camera's subnet when it is
+  # not reachable through the process's default broadcast interface.
+  # petlibro_discovered: petlibro://?uid=PLAF20300000000ABCD0&subnet=192.168.1.0/24&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000
+
+# Petlibro URL options:
+#
+#   quality=hd|sd
+#     Select the requested video quality. The default is hd.
+#
+#   ack=high|contig|hybrid
+#     high is the compatibility default. hybrid sends the contiguous receive
+#     watermark and highest observed sequence in the two ACK fields and is the
+#     mode used for current PLAF203 live testing. Additional experimental ACK
+#     modes remain available for protocol diagnostics.
+#
+#   send_delay_ctrl=1
+#     Send the AVAPI data-delay control immediately before IPCAM_START.
+#
+#   hd_probe_wait_ms=15000
+#     For an HD stream, wait up to this long after the initial low-resolution
+#     SPS for a higher-resolution SPS before publishing the RTSP track. The
+#     default is 0, which publishes the first usable SPS immediately. Camera
+#     transition time varies, so 15000 ms is a useful diagnostic value.
+#
+#   audio=true
+#     Request the AAC audio stream.
+#
+#   strict=1
+#     Drop damaged IDRs and their dependent GOP instead of allowing decoder
+#     concealment. This can cause visible freezes when packets are genuinely
+#     missing.
+#
+#   verbose=1
+#     Enable periodic Petlibro health statistics. High-volume event traces are
+#     separately gated by trace_ack=1, trace_frag=1, trace_frameinfo=1, and
+#     trace_packets=1.
+#
+#   dump_d2c_plain=/tmp/petlibro_d2c.dat
+#   dump_c2d_plain=/tmp/petlibro_c2d.dat
+#     Write length-prefixed plaintext protocol dumps for offline replay and
+#     inspection. Dumps may contain device/session data; keep them outside the
+#     repository and delete them when no longer needed. dump_plain remains an
+#     alias for dump_d2c_plain.
+#
+# See docs/PETLIBRO_DEBUGGING.md for trace flags, experimental ACK and stream
+# controls, dump formats, offline replay, and counter interpretation.

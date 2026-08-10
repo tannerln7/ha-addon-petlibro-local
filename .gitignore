@@ -1,0 +1,36 @@
+# >>> dev-core generated ignores >>>
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
+*.log
+.cache/
+.tmp/
+artifacts/
+# <<< dev-core generated ignores <<<
+
+# Python and test output
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Build and runtime output
+build/
+dist/
+tmp/
+*.dat
+docker/data/
+
+# Local configuration and secrets
+**/go2rtc.yaml
+**/apps.yaml
+**/secrets.yaml
+**/options.json
+capture/
+*.pcap
+*.pcapng
