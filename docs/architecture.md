@@ -6,15 +6,19 @@ integration.
 
 ```mermaid
 flowchart LR
-    UI[Future HACS integration] -->|MQTT entities and commands| Broker[MQTT broker]
+    UI[Future HACS integration] -->|Stable MQTT contracts and commands| Broker[MQTT broker]
     UI -->|RTSP / WebRTC / API| Go2rtc[Patched go2rtc]
 
     subgraph Backend[Petlibro Local backend]
         Controller[PLAF203 AppDaemon controller]
         Go2rtc
+        Status[Atomic camera status JSON]
     end
 
+    Go2rtc -->|Runtime state, SPS, and health| Status
+    Status -->|Validated local polling| Controller
     Controller <-->|Local PLAF203 MQTT protocol| Broker
+    Controller -->|Retained camera state and availability| Broker
     Broker <-->|Redirected plaintext MQTT| Feeder[PLAF203 feeder]
     Go2rtc <-->|LAN UDP/TUTK camera protocol| Feeder
 ```
@@ -32,7 +36,24 @@ output.
 
 The controller connects to the configured MQTT broker through AppDaemon's MQTT
 plugin. It responds to the feeder's PLAF203 protocol, publishes Home Assistant
-MQTT discovery entities, and accepts commands through its own MQTT topics.
+MQTT discovery entities, accepts commands through its own MQTT topics, and
+publishes the stable camera runtime contract for frontend integrations.
+
+### Camera metadata bridge
+
+The Petlibro go2rtc client atomically replaces
+`/data/petlibro_camera_status.json` when lifecycle state, SPS resolution, or
+health counters change. AppDaemon polls this internal file, validates and
+allowlists its fields, merges configured product/stream information, and
+publishes retained MQTT state only after a semantic change or heartbeat.
+
+The file is a private service boundary. The versioned
+[MQTT camera contract](mqtt-camera-contract.md) is the public interface for the
+future HACS integration. Keeping MQTT publication in AppDaemon avoids giving
+go2rtc broker credentials or coupling a frontend to go2rtc internals.
+
+The renderer removes a previous session's status file when go2rtc starts, so
+AppDaemon publishes offline until the new producer writes current evidence.
 
 ### Runtime configuration
 

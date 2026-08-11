@@ -38,6 +38,9 @@ options:
   go2rtc_api_port: 1984
   go2rtc_rtsp_port: 8554
   go2rtc_webrtc_port: 8555
+  publish_camera_metadata: true
+  camera_metadata_topic_prefix: ""
+  camera_metadata_interval_seconds: 30
   verbose_logs: false
   enable_debug_dumps: false
 schema:
@@ -57,5 +60,8 @@ schema:
   go2rtc_api_port: port
   go2rtc_rtsp_port: port
   go2rtc_webrtc_port: port
+  publish_camera_metadata: bool
+  camera_metadata_topic_prefix: str
+  camera_metadata_interval_seconds: int(5,300)
   verbose_logs: bool
   enable_debug_dumps: bool

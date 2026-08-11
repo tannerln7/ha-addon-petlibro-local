@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Publish a versioned, retained MQTT camera runtime contract through AppDaemon,
+  backed by atomic go2rtc lifecycle, SPS-resolution, and health status exports.
 - Fix container startup by relying on the Home Assistant base image's `/init`
   entrypoint instead of passing a second `/init` argument.
 - Remove the unused product-secret option and document the separate feeder and

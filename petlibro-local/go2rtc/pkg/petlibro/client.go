@@ -14,6 +14,7 @@
 //	recv.go       — UDP recv/processor goroutines + maintenance loop + stats
 //	assembler.go  — fragment reassembly (wrapSeq, channelAsm, parseDatagram)
 //	producer.go   — wraps the Client into a go2rtc Producer
+//	runtime_status.go — atomic structured camera status for backend consumers
 //
 // petlibro divergence vs pkg/tutk: petlibro shares pkg/tutk's Luffy
 // crypto (tutk.TransCodePartial / tutk.ReverseTransCodePartial) but
@@ -143,13 +144,14 @@ type Client struct {
 	// recover() dance.  Closing done first means the
 	// send-on-closed-frames race is structurally impossible — every
 	// caller writing to frames first selects on done.
-	frames       chan *Packet
-	done         chan struct{}
-	closeOnce    sync.Once
-	d2cPlainDump *os.File
-	d2cDumpMu    sync.Mutex
-	c2dPlainDump *os.File
-	c2dDumpMu    sync.Mutex
+	frames        chan *Packet
+	done          chan struct{}
+	closeOnce     sync.Once
+	d2cPlainDump  *os.File
+	d2cDumpMu     sync.Mutex
+	c2dPlainDump  *os.File
+	c2dDumpMu     sync.Mutex
+	runtimeStatus *runtimeStatusWriter
 
 	audio             bool
 	quality           string
@@ -422,8 +424,8 @@ func (c *counters) snapshot() countersSnapshot {
 //
 // URL shape:
 //
-//	petlibro://<host>?uid=<UID>[&audio=true][&quality=hd|sd][&ack=<mode>][&ack_lag_window=8][&send_delay_ctrl=1][&hd_probe_wait_ms=N][&strict=1][&verbose=1][&dump_plain=<path>][&dump_d2c_plain=<path>][&dump_c2d_plain=<path>]
-//	petlibro://?uid=<UID>[&subnet=192.168.1.0/24][&audio=true][&quality=hd|sd][&ack=<mode>][&ack_lag_window=8][&send_delay_ctrl=1][&hd_probe_wait_ms=N][&strict=1][&verbose=1][&dump_plain=<path>][&dump_d2c_plain=<path>][&dump_c2d_plain=<path>]
+//	petlibro://<host>?uid=<UID>[&audio=true][&quality=hd|sd][&ack=<mode>][&ack_lag_window=8][&send_delay_ctrl=1][&hd_probe_wait_ms=N][&status_file=<path>][&strict=1][&verbose=1][&dump_plain=<path>][&dump_d2c_plain=<path>][&dump_c2d_plain=<path>]
+//	petlibro://?uid=<UID>[&subnet=192.168.1.0/24][&audio=true][&quality=hd|sd][&ack=<mode>][&ack_lag_window=8][&send_delay_ctrl=1][&hd_probe_wait_ms=N][&status_file=<path>][&strict=1][&verbose=1][&dump_plain=<path>][&dump_d2c_plain=<path>][&dump_c2d_plain=<path>]
 //
 //	strict=1 — drop any IDR with a fragment loss and poison the GOP
 //	           (pristine pixels at the cost of multi-second freezes
@@ -603,6 +605,7 @@ func Dial(rawURL string) (*Client, error) {
 		done:               make(chan struct{}),
 		d2cPlainDump:       d2cPlainDump,
 		c2dPlainDump:       c2dPlainDump,
+		runtimeStatus:      newRuntimeStatusWriter(q.Get("status_file"), quality, hdProbeWait),
 	}
 	if c.verbose {
 		log.Debug().Msgf("petlibro: debug config ackMode=%s lagWindow=%d ackInterval=%s ackRepeatUnchanged=%t sendDelayCtrl=%t streamctrlVariant=%s streamctrlQuality=%d hdProbeWait=%s traces ack=%t frag=%t frameinfo=%t packets=%t",
@@ -611,11 +614,13 @@ func Dial(rawURL string) (*Client, error) {
 			c.traceACK, c.traceFrag, c.traceFrameInfo, c.tracePackets)
 	}
 	if err := c.handshake(); err != nil {
+		c.runtimeStatus.setStatus("error")
 		clearDiscoveryCache(uid, q["subnet"])
 		_ = c.Close()
 		return nil, err
 	}
 	if err := c.bootstrap(); err != nil {
+		c.runtimeStatus.setStatus("error")
 		clearDiscoveryCache(uid, q["subnet"])
 		_ = c.Close()
 		return nil, err
@@ -623,6 +628,7 @@ func Dial(rawURL string) (*Client, error) {
 
 	go c.recvLoop()
 	go c.maintenanceLoop()
+	c.runtimeStatus.setStatus("probing")
 	return c, nil
 }
 
@@ -810,6 +816,8 @@ func (c *Client) ReadPacket() (*Packet, error) {
 // equivalent of wyze's pattern.
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
+		c.runtimeStatus.updateHealth(c.stats.snapshot())
+		c.runtimeStatus.markOffline()
 		close(c.done)
 		_ = c.conn.Close()
 		c.d2cDumpMu.Lock()

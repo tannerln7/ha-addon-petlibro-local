@@ -19,6 +19,7 @@ RUN apk add --no-cache ffmpeg jq \
 
 COPY --from=go2rtc-builder /out/go2rtc /usr/local/bin/go2rtc
 COPY appdaemon/src/plaf203.py /opt/petlibro-local/appdaemon/plaf203.py
+COPY appdaemon/src/camera_metadata.py /opt/petlibro-local/appdaemon/camera_metadata.py
 COPY templates/ /opt/petlibro-local/templates/
 COPY render_config.py /usr/local/bin/petlibro-render-config
 COPY run.sh /usr/local/bin/petlibro-local-run

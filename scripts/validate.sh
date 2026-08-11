@@ -9,7 +9,9 @@ cd "${repo_root}"
 "${python_bin}" -m unittest discover -s tests -v
 "${python_bin}" -m py_compile \
     petlibro-local/render_config.py \
+    petlibro-local/appdaemon/src/camera_metadata.py \
     petlibro-local/appdaemon/src/plaf203.py \
+    petlibro-local/appdaemon/tests/test_camera_metadata.py \
     tests/test_render_config.py
 
 if "${python_bin}" -c 'import appdaemon' >/dev/null 2>&1; then

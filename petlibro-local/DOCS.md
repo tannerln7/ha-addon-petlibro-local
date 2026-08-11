@@ -48,6 +48,19 @@ The default 15-second probe wait advertises the higher resolution only when that
 transition occurs within the window. Some observed sessions transitioned after
 several minutes and were initially advertised as 640x360.
 
+## Camera metadata publishing
+
+| Option | Default | Description |
+|---|---|---|
+| `publish_camera_metadata` | `true` | Publish retained camera state and availability for frontend integrations |
+| `camera_metadata_topic_prefix` | empty | Optional prefix; empty derives `petlibro_local/<product>/<serial>/camera` |
+| `camera_metadata_interval_seconds` | `30` | Retained heartbeat interval; allowed range 5–300 seconds |
+
+The backend marks metadata stale after three heartbeat intervals. It publishes
+state at `<prefix>/state` and availability at `<prefix>/availability`, both
+retained with QoS 1. See the [versioned MQTT contract](../docs/mqtt-camera-contract.md)
+for payload fields and offline behavior.
+
 ## Diagnostics
 
 | Option | Default | Description |

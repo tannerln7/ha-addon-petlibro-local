@@ -5,6 +5,8 @@ import appdaemon.adbase as adbase
 import appdaemon.plugins.hass.hassapi as hassapi
 import appdaemon.plugins.mqtt.mqttapi as mqttapi
 
+from camera_metadata import CameraMetadataPublisher
+
 from dataclasses import dataclass
 import datetime
 import enum
@@ -4229,6 +4231,24 @@ class Plaf203(adbase.ADBase):
         self.ad: adapi.ADAPI = self.get_ad_api()
         self.mqtt: mqttapi.Mqtt = self.get_plugin_api("MQTT")
 
+        self.camera_metadata = CameraMetadataPublisher(
+            self.ad,
+            self.mqtt,
+            enabled=bool(self.args.get('publish_camera_metadata', True)),
+            product=self.args.get('product', 'PLAF203'),
+            serial=self.serial_number,
+            stream_name=self.args.get('go2rtc_stream_name', 'petlibro_feeder'),
+            requested_quality=self.args.get('camera_quality', 'hd'),
+            configured_hd_probe_wait_ms=int(self.args.get('hd_probe_wait_ms', 15000)),
+            rtsp_port=int(self.args.get('go2rtc_rtsp_port', 8554)),
+            status_file=self.args.get('camera_status_file', '/data/petlibro_camera_status.json'),
+            topic_prefix=self.args.get(
+                'camera_metadata_topic_prefix',
+                'petlibro_local/{}/{}/camera'.format(
+                    self.args.get('product', 'PLAF203'), self.serial_number)),
+            heartbeat_seconds=int(self.args.get('camera_metadata_interval_seconds', 30)),
+        )
+
         self.ad.log("Initializing plaf203, serial number {}".format(self.serial_number))
 
         self.storage = Storage(self.ad, 'plaf203', self.serial_number)
@@ -4258,8 +4278,10 @@ class Plaf203(adbase.ADBase):
         self._device_online_set(False)
 
         self._user_input_topics_subscribe()
+        self.camera_metadata.start()
 
     def terminate(self):
+        self.camera_metadata.stop()
         self.storage.terminate()
 
         # Mark the device state as not connected to detect if something is wrong

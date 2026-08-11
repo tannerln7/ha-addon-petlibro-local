@@ -66,10 +66,16 @@ used by Docker Compose. It validates required values and atomically writes:
 - `/data/appdaemon.yaml`
 - `/data/apps.yaml`
 - `/data/appdaemon-secrets.yaml`
+- `/data/petlibro_camera_status.json` (created by an active go2rtc camera session)
 
 The AppDaemon secrets file and all generated configuration files are mode 0600.
 The backend does not accept the feeder product secret. Feeder broker account
 provisioning is external to this package.
+
+The camera status file is an internal, atomic service boundary. go2rtc owns
+runtime observations and counters; AppDaemon validates and publishes the stable
+MQTT contract documented in `docs/mqtt-camera-contract.md`. Frontend code must
+not depend on the internal file schema.
 
 ## Updating imported components
 

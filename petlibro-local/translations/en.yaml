@@ -47,6 +47,15 @@ configuration:
   go2rtc_webrtc_port:
     name: WebRTC port
     description: TCP and UDP port for WebRTC transport.
+  publish_camera_metadata:
+    name: Publish camera metadata
+    description: Publish retained camera runtime state and availability for frontend integrations.
+  camera_metadata_topic_prefix:
+    name: Camera metadata topic prefix
+    description: Optional MQTT prefix; leave empty to derive it from the product and serial.
+  camera_metadata_interval_seconds:
+    name: Camera metadata heartbeat
+    description: Seconds between retained metadata heartbeat refreshes.
   verbose_logs:
     name: Verbose logs
     description: Enable detailed Petlibro and AppDaemon diagnostics.

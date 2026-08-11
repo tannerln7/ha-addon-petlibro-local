@@ -234,6 +234,7 @@ func (c *Client) recvLoop() {
 
 	lastForce := time.Now()
 	lastStats := time.Now()
+	lastRuntimeStatus := time.Now()
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
 
@@ -263,6 +264,10 @@ func (c *Client) recvLoop() {
 		if c.verbose && time.Since(lastStats) > 5*time.Second {
 			c.dumpStats()
 			lastStats = time.Now()
+		}
+		if c.runtimeStatus != nil && time.Since(lastRuntimeStatus) > 5*time.Second {
+			c.runtimeStatus.updateHealth(c.stats.snapshot())
+			lastRuntimeStatus = time.Now()
 		}
 	}
 }

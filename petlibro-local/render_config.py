@@ -32,18 +32,27 @@ DEFAULTS = {
     "go2rtc_api_port": 1984,
     "go2rtc_rtsp_port": 8554,
     "go2rtc_webrtc_port": 8555,
+    "publish_camera_metadata": True,
+    "camera_metadata_topic_prefix": "",
+    "camera_metadata_interval_seconds": 30,
     "verbose_logs": False,
     "enable_debug_dumps": False,
 }
 
 ENV_KEYS = {key: key.upper() for key in DEFAULTS}
-BOOL_KEYS = {"send_delay_ctrl", "verbose_logs", "enable_debug_dumps"}
+BOOL_KEYS = {
+    "send_delay_ctrl",
+    "publish_camera_metadata",
+    "verbose_logs",
+    "enable_debug_dumps",
+}
 INT_KEYS = {
     "mqtt_port",
     "hd_probe_wait_ms",
     "go2rtc_api_port",
     "go2rtc_rtsp_port",
     "go2rtc_webrtc_port",
+    "camera_metadata_interval_seconds",
 }
 
 
@@ -110,6 +119,16 @@ def validate(options: dict[str, object]) -> None:
         raise ValueError("ack_mode must be high, contig, or hybrid")
     if not 0 <= int(options["hd_probe_wait_ms"]) <= 60000:
         raise ValueError("hd_probe_wait_ms must be between 0 and 60000")
+    if not 5 <= int(options["camera_metadata_interval_seconds"]) <= 300:
+        raise ValueError("camera_metadata_interval_seconds must be between 5 and 300")
+
+    topic_prefix = str(options["camera_metadata_topic_prefix"])
+    if topic_prefix and not re.fullmatch(
+        r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*", topic_prefix
+    ):
+        raise ValueError(
+            "camera_metadata_topic_prefix must contain MQTT path segments without wildcards"
+        )
 
     for key in ("mqtt_port", "go2rtc_api_port", "go2rtc_rtsp_port", "go2rtc_webrtc_port"):
         if not 1 <= int(options[key]) <= 65535:
@@ -138,6 +157,10 @@ def render_template(template_dir: Path, name: str, values: dict[str, str]) -> st
 
 
 def render_go2rtc(options: dict[str, object], data_dir: Path, template_dir: Path) -> None:
+    status_path = data_dir / "petlibro_camera_status.json"
+    if status_path.is_symlink() or status_path.exists():
+        status_path.unlink()
+
     query = {
         "uid": str(options["uid"]),
         "quality": str(options["camera_quality"]),
@@ -145,6 +168,8 @@ def render_go2rtc(options: dict[str, object], data_dir: Path, template_dir: Path
         "send_delay_ctrl": "1" if options["send_delay_ctrl"] else "0",
         "hd_probe_wait_ms": str(options["hd_probe_wait_ms"]),
     }
+    if options["publish_camera_metadata"]:
+        query["status_file"] = "/data/petlibro_camera_status.json"
     if options["verbose_logs"]:
         query["verbose"] = "1"
     if options["enable_debug_dumps"]:
@@ -169,10 +194,26 @@ def render_go2rtc(options: dict[str, object], data_dir: Path, template_dir: Path
 
 
 def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: Path) -> None:
+    topic_prefix = str(options["camera_metadata_topic_prefix"]) or (
+        f"petlibro_local/{options['product']}/{options['serial']}/camera"
+    )
     common = {
         "MQTT_HOST": yaml_string(options["mqtt_host"]),
         "MQTT_PORT": str(options["mqtt_port"]),
         "SERIAL": yaml_string(options["serial"]),
+        "PRODUCT": yaml_string(options["product"]),
+        "STREAM_NAME": yaml_string(options["go2rtc_stream_name"]),
+        "CAMERA_QUALITY": yaml_string(options["camera_quality"]),
+        "HD_PROBE_WAIT_MS": str(options["hd_probe_wait_ms"]),
+        "RTSP_PORT": str(options["go2rtc_rtsp_port"]),
+        "PUBLISH_CAMERA_METADATA": (
+            "true" if options["publish_camera_metadata"] else "false"
+        ),
+        "CAMERA_STATUS_FILE": yaml_string("/data/petlibro_camera_status.json"),
+        "CAMERA_METADATA_TOPIC_PREFIX": yaml_string(topic_prefix),
+        "CAMERA_METADATA_INTERVAL_SECONDS": str(
+            options["camera_metadata_interval_seconds"]
+        ),
     }
     atomic_write(
         data_dir / "appdaemon.yaml",
@@ -200,6 +241,12 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
                 "PETLIBRO_APP_SOURCE", "/opt/petlibro-local/appdaemon/plaf203.py"
             )
         ),
+        app_dir / "camera_metadata.py": Path(
+            os.environ.get(
+                "PETLIBRO_CAMERA_METADATA_SOURCE",
+                "/opt/petlibro-local/appdaemon/camera_metadata.py",
+            )
+        ),
     }
     for link, target in links.items():
         if link.is_symlink() or link.exists():
@@ -215,7 +262,12 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("component", choices=("all", "go2rtc", "appdaemon"), nargs="?", default="all")
+    parser.add_argument(
+        "component",
+        choices=("all", "go2rtc", "appdaemon"),
+        nargs="?",
+        default="all",
+    )
     args = parser.parse_args()
 
     data_dir = Path(os.environ.get("PETLIBRO_DATA_DIR", "/data"))

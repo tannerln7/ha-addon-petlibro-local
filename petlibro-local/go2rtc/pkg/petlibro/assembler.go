@@ -1041,12 +1041,15 @@ func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNumOrSt
 	}
 	if sps := annexbNAL(au, h264.NALUTypeSPS); sps != nil && !slices.Equal(sps, c.lastSPS) {
 		c.lastSPS = append(c.lastSPS[:0], sps...)
-		if len(sps) >= 4 && c.verbose {
+		if len(sps) >= 4 {
 			decoded := h264.DecodeSPS(sps)
 			if decoded != nil {
-				log.Debug().Uint16("width", decoded.Width()).Uint16("height", decoded.Height()).
-					Uint8("profileIDC", sps[1]).Uint8("levelIDC", sps[3]).
-					Str("quality", c.quality).Msg("petlibro SPS resolution")
+				c.runtimeStatus.observeSPS(decoded.Width(), decoded.Height(), sps[1], sps[3])
+				if c.verbose {
+					log.Debug().Uint16("width", decoded.Width()).Uint16("height", decoded.Height()).
+						Uint8("profileIDC", sps[1]).Uint8("levelIDC", sps[3]).
+						Str("quality", c.quality).Msg("petlibro SPS resolution")
+				}
 			}
 		}
 	}

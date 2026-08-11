@@ -51,6 +51,11 @@ Required device-specific options are:
 The default broker hostname is `core-mosquitto`. See the
 [add-on option reference](petlibro-local/DOCS.md) for every setting.
 
+The backend also publishes retained camera runtime state for frontend
+integrations under `petlibro_local/<product>/<serial>/camera`. See the
+[MQTT camera contract](docs/mqtt-camera-contract.md) for the versioned JSON
+schema and availability behavior.
+
 ## Endpoints
 
 With the default configuration and host networking:
@@ -103,6 +108,7 @@ debug dumps under `docker/data/`. See the
 
 - [Architecture](docs/architecture.md)
 - [Configuration](docs/configuration.md)
+- [MQTT camera contract](docs/mqtt-camera-contract.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Development](DEVELOPMENT.md)
 - [Add-on options](petlibro-local/DOCS.md)

@@ -40,7 +40,7 @@ type Producer struct {
 //
 // URL shape (full grammar lives on pkg/petlibro.Dial):
 //
-//	petlibro://<host>?uid=<UID>[&audio=true][&quality=hd|sd][&ack=<mode>][&ack_interval_ms=25][&ack_repeat_unchanged=1][&send_delay_ctrl=1][&streamctrl_variant=legacy|standard|none][&streamctrl_quality=N][&hd_probe_wait_ms=N][&strict=1][&verbose=1][&trace_ack=1][&trace_frag=1][&trace_frameinfo=1][&trace_packets=1][&dump_plain=<path>][&dump_d2c_plain=<path>][&dump_c2d_plain=<path>]
+//	petlibro://<host>?uid=<UID>[&audio=true][&quality=hd|sd][&ack=<mode>][&ack_interval_ms=25][&ack_repeat_unchanged=1][&send_delay_ctrl=1][&streamctrl_variant=legacy|standard|none][&streamctrl_quality=N][&hd_probe_wait_ms=N][&status_file=<path>][&strict=1][&verbose=1][&trace_ack=1][&trace_frag=1][&trace_frameinfo=1][&trace_packets=1][&dump_plain=<path>][&dump_d2c_plain=<path>][&dump_c2d_plain=<path>]
 //	petlibro://?uid=<UID>[&subnet=192.168.1.0/24][same options as above]
 //
 // strict=1 — pristine-pixels-over-fluency policy: any IDR with a lost
@@ -73,9 +73,11 @@ func newProducer(rawURL string) (*Producer, error) {
 
 	medias, firstAU, firstTS, err := probe(client)
 	if err != nil {
+		client.runtimeStatus.setStatus("error")
 		_ = client.Close()
 		return nil, err
 	}
+	client.runtimeStatus.setStatus("online")
 
 	return &Producer{
 		Connection: core.Connection{

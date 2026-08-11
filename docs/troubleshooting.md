@@ -41,9 +41,10 @@ timeout 300s ffmpeg -hide_banner -rtsp_transport tcp \
 ## Initial 640x360 stream before HD
 
 Tested PLAF203 firmware can start an HD session with a 640x360 SPS and switch to
-1920x1080 several seconds later. Keep `camera_quality: hd` and use the
-recommended `hd_probe_wait_ms: 15000`. Increase it up to 60000 only when logs
-show that the higher-resolution SPS arrives later.
+1920x1080 later. Some observed sessions transitioned after several minutes,
+beyond the configurable 60000 ms probe limit. Keep `camera_quality: hd` and use
+the recommended `hd_probe_wait_ms: 15000`; the runtime metadata reports both
+the first and latest SPS even when go2rtc initially advertises 640x360.
 
 ## Corruption, choppy playback, or media stalls
 
@@ -78,6 +79,26 @@ broker and that topics beginning with
 
 The backend does not change feeder DNS or provision its factory MQTT
 credentials. Those network prerequisites must be completed separately.
+
+## Camera metadata is offline or missing
+
+Camera producers start lazily. Open the configured RTSP or WebRTC stream before
+expecting `camera/availability` to become `online`. Then check the retained
+topics using generic placeholders:
+
+```text
+petlibro_local/PLAF203/YOUR_DEVICE_SERIAL/camera/state
+petlibro_local/PLAF203/YOUR_DEVICE_SERIAL/camera/availability
+```
+
+If availability stays offline, inspect the add-on log for a short camera
+metadata warning and confirm `/data/petlibro_camera_status.json` exists inside
+the container. A missing file means go2rtc has not started a producer or could
+not write status. A malformed file publishes `status: error`; a file older than
+three configured heartbeat intervals publishes `status: offline`.
+
+Do not point frontend integrations at the file. Use the documented
+[MQTT camera contract](mqtt-camera-contract.md).
 
 ## Collect diagnostics
 

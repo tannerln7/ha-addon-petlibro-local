@@ -34,6 +34,9 @@ class RenderConfigTests(unittest.TestCase):
             "go2rtc_api_port": 1984,
             "go2rtc_rtsp_port": 8554,
             "go2rtc_webrtc_port": 8555,
+            "publish_camera_metadata": True,
+            "camera_metadata_topic_prefix": "",
+            "camera_metadata_interval_seconds": 30,
             "verbose_logs": True,
             "enable_debug_dumps": True,
         }
@@ -43,6 +46,8 @@ class RenderConfigTests(unittest.TestCase):
             data_dir = Path(temporary)
             source = data_dir / "plaf203.py"
             source.write_text("# synthetic app source\n", encoding="utf-8")
+            status_file = data_dir / "petlibro_camera_status.json"
+            status_file.write_text('{"status":"stale"}\n', encoding="utf-8")
             options = self.options()
             render_config.validate(options)
             render_config.render_go2rtc(
@@ -64,8 +69,17 @@ class RenderConfigTests(unittest.TestCase):
             )
             self.assertIn("ack=hybrid", generated)
             self.assertIn("hd_probe_wait_ms=15000", generated)
+            self.assertIn(
+                "status_file=%2Fdata%2Fpetlibro_camera_status.json", generated
+            )
             self.assertIn("dump_c2d_plain=%2Fdata%2Fpetlibro_c2d.dat", generated)
+            self.assertIn(
+                'camera_metadata_topic_prefix: "petlibro_local/PLAF203/'
+                'YOUR_DEVICE_SERIAL/camera"',
+                generated,
+            )
             self.assertIn('mqtt_password: "example-password"', generated)
+            self.assertFalse(status_file.exists())
             self.assertEqual(
                 0o600, (data_dir / "appdaemon-secrets.yaml").stat().st_mode & 0o777
             )
@@ -116,6 +130,38 @@ class RenderConfigTests(unittest.TestCase):
         options["uid"] = "too-short"
         with self.assertRaisesRegex(ValueError, "uid must contain exactly 20"):
             render_config.validate(options)
+
+    def test_rejects_invalid_camera_metadata_options(self):
+        options = self.options()
+        options["camera_metadata_topic_prefix"] = "petlibro/#"
+        with self.assertRaisesRegex(ValueError, "without wildcards"):
+            render_config.validate(options)
+
+        options = self.options()
+        options["camera_metadata_interval_seconds"] = 4
+        with self.assertRaisesRegex(ValueError, "between 5 and 300"):
+            render_config.validate(options)
+
+    def test_disabling_camera_metadata_omits_status_export(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            options = self.options()
+            options["publish_camera_metadata"] = False
+            render_config.validate(options)
+            render_config.render_go2rtc(
+                options, data_dir, ROOT / "petlibro-local" / "templates"
+            )
+            render_config.render_appdaemon(
+                options, data_dir, ROOT / "petlibro-local" / "templates"
+            )
+
+            self.assertNotIn(
+                "status_file", (data_dir / "go2rtc.yaml").read_text(encoding="utf-8")
+            )
+            self.assertIn(
+                "publish_camera_metadata: false",
+                (data_dir / "apps.yaml").read_text(encoding="utf-8"),
+            )
 
 
 if __name__ == "__main__":
