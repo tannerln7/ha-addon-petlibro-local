@@ -35,3 +35,7 @@ docker/data/
 capture/
 *.pcap
 *.pcapng
+
+# Local editor and AI assistant configuration
+.github/copilot-instructions.md
+.vscode/*
