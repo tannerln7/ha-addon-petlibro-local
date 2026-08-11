@@ -24,6 +24,7 @@ build/
 dist/
 tmp/
 *.dat
+*.tar.gz
 docker/data/
 
 # Local configuration and secrets

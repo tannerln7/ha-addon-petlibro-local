@@ -34,9 +34,22 @@ feeder's product secret.
 
 ## Build and run
 
+The direct Compose workflow is:
+
+```bash
+cd docker
+docker compose up -d --build
+docker compose logs -f
+```
+
+From the repository root, the maintained wrappers provide the same build and
+startup behavior plus a separate stream check:
+
 ```bash
 ./scripts/build-local.sh
 ./scripts/run-local.sh
+docker compose -f docker/docker-compose.yml logs -f
+./scripts/test-stream.sh
 ```
 
 Compose uses `network_mode: host`; published-port mappings are therefore not
@@ -48,12 +61,6 @@ Check status and logs:
 cd docker
 docker compose ps
 docker compose logs --follow petlibro-local
-```
-
-Test the default RTSP stream:
-
-```bash
-./scripts/test-stream.sh
 ```
 
 Override the stream name when needed:

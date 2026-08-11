@@ -1,16 +1,16 @@
 configuration:
   mqtt_host:
     name: MQTT host
-    description: Hostname or address of the broker used by the feeder and backend.
+    description: Hostname or address the backend uses to reach the MQTT broker.
   mqtt_port:
     name: MQTT port
     description: TCP port of the MQTT broker.
   mqtt_username:
     name: MQTT username
-    description: Optional username used by AppDaemon to connect to the broker.
+    description: Optional backend identity used by AppDaemon to connect to the broker.
   mqtt_password:
     name: MQTT password
-    description: Optional password used by AppDaemon to connect to the broker.
+    description: Optional password for the AppDaemon backend identity.
   device_ip:
     name: Device IP
     description: LAN address of the PLAF203 feeder camera.
@@ -37,7 +37,7 @@ configuration:
     description: Send the AVAPI data-delay control before starting media.
   hd_probe_wait_ms:
     name: HD probe wait
-    description: Milliseconds to wait for a higher-resolution SPS.
+    description: Milliseconds to wait for a higher-resolution SPS before advertising the initial stream.
   go2rtc_api_port:
     name: go2rtc API port
     description: TCP port for the go2rtc web interface and API.
@@ -61,7 +61,7 @@ configuration:
     description: Enable detailed Petlibro and AppDaemon diagnostics.
   enable_debug_dumps:
     name: Debug dumps
-    description: Write decrypted protocol dumps to persistent add-on data.
+    description: Write sensitive decrypted protocol dumps to persistent add-on data.
 network:
   1984/tcp: go2rtc web interface and API
   8554/tcp: RTSP server

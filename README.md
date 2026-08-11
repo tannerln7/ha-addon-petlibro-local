@@ -1,4 +1,4 @@
-# Petlibro Local backend
+# Petlibro Local Backend
 
 Petlibro Local packages two working local-control components into one backend
 appliance:
@@ -10,9 +10,10 @@ The repository is installable as a Home Assistant add-on repository and can
 also run with Docker Compose in a Debian LXC or other Linux host. It is the
 canonical source for both imported backend components going forward.
 
-This is the backend only. A separate HACS integration may later provide a
-polished Home Assistant frontend and consume the MQTT entities and go2rtc URLs
-exposed here.
+This is the backend only. It does not include a HACS frontend integration,
+provision an MQTT broker or feeder account, or perform Petlibro cloud account
+setup. A separate HACS integration may later provide a polished Home Assistant
+frontend using the MQTT contract and go2rtc URLs exposed here.
 
 ## Support status
 
@@ -28,10 +29,17 @@ configured probe window before later producing 1920x1080 media.
 
 ## Home Assistant OS installation
 
-When this repository is hosted on GitHub or another Git server:
+Repository URL:
 
-1. Open **Settings → Apps → App store** in Home Assistant.
-2. Open the repository menu and add this repository's URL.
+```text
+https://github.com/tannerln7/ha-addon-petlibro-local
+```
+
+To install from a repository that Home Assistant can access:
+
+1. Open **Settings → Apps → App store** in Home Assistant. Older releases label
+   this area **Settings → Add-ons → Add-on Store**.
+2. Open the three-dot menu, choose **Repositories**, and add the URL above.
 3. Install **Petlibro Local backend**.
 4. Configure the feeder and MQTT options before starting it.
 5. Start the app and inspect its log for both the go2rtc and AppDaemon startup
@@ -48,7 +56,9 @@ Required device-specific options are:
 - `serial`: feeder MQTT device serial (`DL_DEVICE_ID`)
 - `uid`: exact 20-character camera UID
 
-The default broker hostname is `core-mosquitto`. See the
+The default broker hostname is `core-mosquitto`. A broker must already exist,
+and it must authenticate both the backend identity configured here and the
+physical feeder's separately provisioned identity. See the
 [add-on option reference](petlibro-local/DOCS.md) for every setting.
 
 The backend also publishes retained camera runtime state for frontend
@@ -70,19 +80,19 @@ The generated camera source is equivalent to:
 
 ```yaml
 streams:
-  petlibro_feeder: petlibro://192.168.1.100?uid=PLAF20300000000ABCD0&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000
+  petlibro_feeder: petlibro://192.168.1.100?uid=YOUR_DEVICE_UID&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000
 ```
 
-The UID above is synthetic. Replace it with the exact 20-character value from
-the device.
+Replace `YOUR_DEVICE_UID` with the exact 20-character value from the device.
 
 ## Docker / Debian LXC fallback
 
 ```bash
-cp docker/.env.example docker/.env
-# Edit docker/.env with local values.
-./scripts/run-local.sh
-./scripts/test-stream.sh
+cd docker
+cp .env.example .env
+# Edit .env with local values.
+docker compose up -d --build
+docker compose logs -f
 ```
 
 Docker Compose uses host networking and persists generated configuration and
@@ -113,6 +123,7 @@ debug dumps under `docker/data/`. See the
 - [Development](DEVELOPMENT.md)
 - [Add-on options](petlibro-local/DOCS.md)
 - [Docker / LXC deployment](docker/README.md)
+- [Release history](petlibro-local/CHANGELOG.md)
 
 The imported components retain their own documentation and licenses under
 [`petlibro-local/go2rtc`](petlibro-local/go2rtc/) and

@@ -70,15 +70,22 @@ The add-on writes:
 Disable dumping after a short reproduction because files grow continuously and
 contain decrypted device/session traffic.
 
-## MQTT controller is offline
+## Backend cannot connect to MQTT
 
 Check that the broker is reachable and that the configured AppDaemon account
-can subscribe and publish. Confirm the feeder itself is connecting to the local
-broker and that topics beginning with
+can subscribe and publish. The `mqtt_username` and `mqtt_password` options are
+for this backend identity, not the physical feeder.
+
+## Feeder does not connect to MQTT
+
+Confirm the feeder itself is connecting to the local broker and that topics
+beginning with
 `dl/PLAF203/YOUR_DEVICE_SERIAL/device/` are present.
 
 The backend does not change feeder DNS or provision its factory MQTT
-credentials. Those network prerequisites must be completed separately.
+credentials. The feeder identity is separate from the backend identity and must
+already exist in the broker. Those network prerequisites must be completed
+separately.
 
 ## Camera metadata is offline or missing
 
