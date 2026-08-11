@@ -122,14 +122,20 @@ correction times out.
 
 ## Feeding plans
 
-Home Assistant exposes feeding-plan slots as JSON text entities. This example
+Home Assistant exposes nine **Feeding schedule** slots as JSON text entities. This example
 runs every day at 19:00, disables feeding audio, and dispenses three portions:
 
 ```json
 {"id":1,"execution_time":{"hour":19,"minute":0},"scheduled_days":["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],"enable_audio":false,"play_audio_times":1,"grain_num":3}
 ```
 
-Use a distinct `id` for each configured plan.
+The JSON `id` must match the Home Assistant slot number: Feeding schedule 1 uses
+`"id":1`, Feeding schedule 2 uses `"id":2`, and so on through Feeding schedule 9. A
+slot/ID mismatch is rejected without changing the stored schedule. After a
+valid update, the add-on persists the complete desired schedule, republishes
+the retained state for all configured slots, and sends the schedule to the
+feeder. Refreshing Home Assistant therefore keeps the accepted value.
+
 JSON numbers must not contain leading zeroes: use `{"hour":7,"minute":1}`
 for 07:01 and `{"hour":7,"minute":0}` for 07:00. Invalid JSON is rejected
 without changing the stored or device schedule; the warning reports the error
@@ -145,11 +151,14 @@ portion default survive add-on restarts.
 
 ## Bowl configuration and portions
 
-Home Assistant exposes **Bowl configuration** as a non-optimistic select with
-`SINGLE_BOWL` and `DOUBLE_BOWL` options. Changing it sends only the feeder's
-`bowlMode` attribute; the displayed state changes when the feeder reports the
-new value. The observed firmware reports `SINGLE_BOWL`. `DOUBLE_BOWL` is the
-inferred matching wire value and should be confirmed on a dual-tray feeder.
+Home Assistant exposes **Bowl setup** as a non-optimistic select with friendly
+**Single bowl** and **Dual bowl** options. MQTT and the controller continue to
+use the protocol values `SINGLE_BOWL` and `DOUBLE_BOWL`; discovery templates
+translate only what Home Assistant displays and sends from its UI. Changing the
+select sends only the feeder's `bowlMode` attribute, and the displayed state
+changes when the feeder reports the new value. The observed firmware reports
+`SINGLE_BOWL`. `DOUBLE_BOWL` is the inferred matching wire value and should be
+confirmed on a dual-tray feeder.
 
 The controller does not multiply or divide `grain_num`. A scheduled or manual
 feed quantity remains the total amount requested from the feeder. PETLIBRO's
@@ -159,13 +168,24 @@ configured quantity is not an amount per bowl.
 
 ## Camera resolution state
 
-The Home Assistant **Feeder-reported camera resolution** select reflects the
-PLAF203 `resolution` attribute. The feeder may report P1080 while an HD TUTK
-session is active and return to P720 when that session ends. This is separate
+The Home Assistant **Feeder camera resolution** select reflects the PLAF203
+`resolution` attribute as **720p** or **1080p**. The MQTT values remain `P720`
+and `P1080`. The feeder may report P1080 while an HD TUTK session is active and
+return to P720 when that session ends. This is separate
 from the add-on's requested `camera_quality` and the SPS-derived
 `actual_resolution` in camera runtime metadata. Sparse device events update
 only the fields present in the event; unrelated state is not synthesized or
 republished.
+
+## Home Assistant labels
+
+MQTT discovery uses human-readable names and select values without changing the
+backend contract. For example, protocol schedule values
+`NON_SCHEDULED_ENABLED` and `SCHEDULED_ENABLED` appear as **Always active** and
+**Scheduled**, night vision appears as **Automatic**, **On**, or **Off**, and
+feeding quantities are labeled as portions. Entity unique IDs, state topics,
+command topics, and raw payload values remain unchanged so existing automations
+and MQTT consumers continue to work.
 
 ## Network notes
 

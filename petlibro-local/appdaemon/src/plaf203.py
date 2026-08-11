@@ -4137,65 +4137,101 @@ class HomeAssistantDiscoveryMqtt:
         self.serial_number: str = serial_number
 
     def discovery_issue(self):
-        self._ha_switch_config_publish('Feeding audio enable', 'mdi:account-voice', 'audio', 'enable', 'config')
-        self._ha_text_config_publish('Feeding audio file url', 'mdi:account-voice', 'audio', 'file_url', 'config')
+        schedule_labels = {
+            AgingType.NON_SCHEDULED_ENABLED.name: 'Always active',
+            AgingType.SCHEDULED_ENABLED.name: 'Scheduled',
+        }
+        sensitivity_labels = {
+            MotionDetectionSensitivity.LOW.name: 'Low',
+            MotionDetectionSensitivity.MEDIUM.name: 'Medium',
+            MotionDetectionSensitivity.HIGH.name: 'High',
+        }
 
-        self._ha_switch_config_publish('Camera enable', 'mdi:cctv', 'camera', 'enable', 'config')
-        self._ha_binary_sensor_config_publish('Camera feature enabled', 'mdi:cctv', 'camera', 'enable', 'diagnostic')
-        self._ha_select_config_publish('Camera aging type', 'mdi:cctv', 'camera', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config')
-        self._ha_select_config_publish('Camera night vision', 'mdi:cctv', 'camera', 'night_vision', [ NightVision.AUTOMATIC.name, NightVision.OPEN.name, NightVision.CLOSE.name ], 'config')
-        self._ha_select_config_publish('Feeder-reported camera resolution', 'mdi:cctv', 'camera', 'resolution', [ Resolution.P720.name, Resolution.P1080.name ], 'config')
+        self._ha_switch_config_publish('Meal call', 'mdi:account-voice', 'audio', 'enable', 'config')
+        self._ha_text_config_publish('Meal call audio URL', 'mdi:account-voice', 'audio', 'file_url', 'config')
+
+        self._ha_switch_config_publish('Camera', 'mdi:cctv', 'camera', 'enable', 'config')
+        self._ha_binary_sensor_config_publish('Camera reported state', 'mdi:cctv', 'camera', 'enable', 'diagnostic')
+        self._ha_select_config_publish('Camera schedule mode', 'mdi:cctv', 'camera', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config', schedule_labels)
+        self._ha_select_config_publish('IR night vision', 'mdi:weather-night', 'camera', 'night_vision', [ NightVision.AUTOMATIC.name, NightVision.OPEN.name, NightVision.CLOSE.name ], 'config', {
+            NightVision.AUTOMATIC.name: 'Automatic',
+            NightVision.OPEN.name: 'On',
+            NightVision.CLOSE.name: 'Off',
+        })
+        self._ha_select_config_publish('Feeder camera resolution', 'mdi:cctv', 'camera', 'resolution', [ Resolution.P720.name, Resolution.P1080.name ], 'config', {
+            Resolution.P720.name: '720p',
+            Resolution.P1080.name: '1080p',
+        })
         # TODO support aging type 2 items
 
-        self._ha_switch_config_publish('Recording enable', 'mdi:camera', 'recording', 'enable', 'config')
-        self._ha_binary_sensor_config_publish('Recording feature enabled', 'mdi:camera', 'recording', 'feature_enabled', 'diagnostic')
-        self._ha_select_config_publish('Recording aging type', 'mdi:camera', 'recording', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config')
-        self._ha_select_config_publish('Recording mode', 'mdi:camera', 'recording', 'mode', [ VideoRecordMode.CONTINUOUS.name, VideoRecordMode.MOTION_DETECTION.name ], 'config')
+        self._ha_switch_config_publish('Local video recording', 'mdi:camera', 'recording', 'enable', 'config')
+        self._ha_binary_sensor_config_publish('Local recording available', 'mdi:camera', 'recording', 'feature_enabled', 'diagnostic')
+        self._ha_select_config_publish('Local recording schedule mode', 'mdi:camera', 'recording', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config', schedule_labels)
+        self._ha_select_config_publish('Local recording mode', 'mdi:camera', 'recording', 'mode', [ VideoRecordMode.CONTINUOUS.name, VideoRecordMode.MOTION_DETECTION.name ], 'config', {
+            VideoRecordMode.CONTINUOUS.name: 'Continuous',
+            VideoRecordMode.MOTION_DETECTION.name: 'Motion-triggered',
+        })
         # TODO support aging type 2 items
 
-        self._ha_sensor_config_publish('SD card state', 'mdi:micro-sd', 'sd_card', 'state')
+        self._ha_sensor_config_publish('SD card status', 'mdi:micro-sd', 'sd_card', 'state', value_labels={
+            SdCardState.NOT_AVAILABLE.name: 'Not available',
+            SdCardState.AVAILABLE.name: 'Ready',
+            SdCardState.INITIALIZING.name: 'Initializing',
+        })
         self._ha_sensor_config_publish('SD card file system', 'mdi:micro-sd', 'sd_card', 'file_system')
         self._ha_sensor_config_publish('SD card total capacity', 'mdi:micro-sd', 'sd_card', 'total_capacity', unit_of_measurement = "MB")
         self._ha_sensor_config_publish('SD card used capacity', 'mdi:micro-sd', 'sd_card', 'used_capacity', unit_of_measurement = "MB")
 
-        self._ha_switch_config_publish('Feeding video enable', 'mdi:movie', 'feeding_video', 'enable', 'config')
-        self._ha_switch_config_publish('Feeding video on feeding plan trigger enabled', 'mdi:movie', 'feeding_video', 'on_feeding_plan_trigger_enable', 'config')
-        self._ha_switch_config_publish('Feeding video on manual feeding trigger enabled', 'mdi:movie', 'feeding_video', 'on_manual_feeding_trigger_enable', 'config')
-        self._ha_number_box_config_publish('Feeding video time before feeding plan trigger', 'mdi:movie', 'feeding_video', 'time_before_feeding_plan_trigger', 0, 60, 'config')
-        self._ha_number_box_config_publish('Feeding video time after manual feeding trigger', 'mdi:movie', 'feeding_video', 'time_after_manual_feeding_trigger', 0, 60, 'config')
-        self._ha_number_box_config_publish('Feeding video time automatic recording', 'mdi:movie', 'feeding_video', 'time_automatic_recording', 0, 60, 'config')
-        self._ha_switch_config_publish('Feeding video watermark', 'mdi:movie', 'feeding_video', 'watermark', 'config')
+        self._ha_switch_config_publish('Meal video recording', 'mdi:movie', 'feeding_video', 'enable', 'config')
+        self._ha_switch_config_publish('Record scheduled meals', 'mdi:movie', 'feeding_video', 'on_feeding_plan_trigger_enable', 'config')
+        self._ha_switch_config_publish('Record manual feeds', 'mdi:movie', 'feeding_video', 'on_manual_feeding_trigger_enable', 'config')
+        self._ha_number_box_config_publish('Scheduled meal pre-roll', 'mdi:movie', 'feeding_video', 'time_before_feeding_plan_trigger', 0, 60, 'config')
+        self._ha_number_box_config_publish('Manual feed post-roll', 'mdi:movie', 'feeding_video', 'time_after_manual_feeding_trigger', 0, 60, 'config')
+        self._ha_number_box_config_publish('Automatic recording duration', 'mdi:movie', 'feeding_video', 'time_automatic_recording', 0, 60, 'config')
+        self._ha_switch_config_publish('Video watermark', 'mdi:movie', 'feeding_video', 'watermark', 'config')
 
-        self._ha_switch_config_publish('Cloud video recording enable', 'mdi:cloud', 'cloud_video_recording', 'enable', 'config')
+        self._ha_switch_config_publish('Cloud video recording', 'mdi:cloud', 'cloud_video_recording', 'enable', 'config')
 
-        self._ha_switch_config_publish('Motion detection enable', 'mdi:motion-sensor', 'motion_detection', 'enable', 'config')
-        self._ha_binary_sensor_config_publish('Motion detection feature enabled', 'mdi:motion-sensor', 'motion_detection', 'feature_enabled', 'diagnostic')
-        self._ha_select_config_publish('Motion detection aging type', 'mdi:motion-sensor', 'motion_detection', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config')
-        self._ha_select_config_publish('Motion detection range', 'mdi:motion-sensor', 'motion_detection', 'range', [ MotionDetectionRange.SMALL.name, MotionDetectionRange.MEDIUM.name, MotionDetectionRange.LARGE.name ], 'config')
-        self._ha_select_config_publish('Motion detection sensitivity', 'mdi:motion-sensor', 'motion_detection', 'sensitivity', [ MotionDetectionSensitivity.LOW.name, MotionDetectionSensitivity.MEDIUM.name, MotionDetectionSensitivity.HIGH.name ], 'config')
+        self._ha_switch_config_publish('Motion detection', 'mdi:motion-sensor', 'motion_detection', 'enable', 'config')
+        self._ha_binary_sensor_config_publish('Motion detection available', 'mdi:motion-sensor', 'motion_detection', 'feature_enabled', 'diagnostic')
+        self._ha_select_config_publish('Motion detection schedule mode', 'mdi:motion-sensor', 'motion_detection', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config', schedule_labels)
+        self._ha_select_config_publish('Motion detection range', 'mdi:motion-sensor', 'motion_detection', 'range', [ MotionDetectionRange.SMALL.name, MotionDetectionRange.MEDIUM.name, MotionDetectionRange.LARGE.name ], 'config', {
+            MotionDetectionRange.SMALL.name: 'Small',
+            MotionDetectionRange.MEDIUM.name: 'Medium',
+            MotionDetectionRange.LARGE.name: 'Large',
+        })
+        self._ha_select_config_publish('Motion detection sensitivity', 'mdi:motion-sensor', 'motion_detection', 'sensitivity', [ MotionDetectionSensitivity.LOW.name, MotionDetectionSensitivity.MEDIUM.name, MotionDetectionSensitivity.HIGH.name ], 'config', sensitivity_labels)
         # TODO support aging type 2 items
 
-        self._ha_switch_config_publish('Sound detection on/off', 'mdi:bullhorn', 'sound_detection', 'enable', 'config')
-        self._ha_binary_sensor_config_publish('Sound detection feature enabled', 'mdi:bullhorn', 'sound_detection', 'feature_enabled', 'diagnostic')
-        self._ha_select_config_publish('Sound detection aging type', 'mdi:bullhorn', 'sound_detection', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config')
-        self._ha_select_config_publish('Sound detection sensitivity', 'mdi:bullhorn', 'sound_detection', 'sensitivity', [ SoundDetectionSensitivity.LOW.name, SoundDetectionSensitivity.MEDIUM.name, SoundDetectionSensitivity.HIGH.name ], 'config')
+        self._ha_switch_config_publish('Sound detection', 'mdi:bullhorn', 'sound_detection', 'enable', 'config')
+        self._ha_binary_sensor_config_publish('Sound detection available', 'mdi:bullhorn', 'sound_detection', 'feature_enabled', 'diagnostic')
+        self._ha_select_config_publish('Sound detection schedule mode', 'mdi:bullhorn', 'sound_detection', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config', schedule_labels)
+        self._ha_select_config_publish('Sound detection sensitivity', 'mdi:bullhorn', 'sound_detection', 'sensitivity', [ SoundDetectionSensitivity.LOW.name, SoundDetectionSensitivity.MEDIUM.name, SoundDetectionSensitivity.HIGH.name ], 'config', sensitivity_labels)
         # TODO support aging type 2 items
 
-        self._ha_switch_config_publish('Sound enable', 'mdi:speaker', 'sound', 'enable', 'config')
-        self._ha_binary_sensor_config_publish('Sound feature enabled', 'mdi:speaker', 'sound', 'feature_enabled', 'diagnostic')
-        self._ha_select_config_publish('Sound aging type', 'mdi:speaker', 'sound', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config')
-        self._ha_number_slider_config_publish('Sound volume', 'mdi:speaker', 'sound', 'volume', 0, 100, 'config')
+        self._ha_switch_config_publish('Device sound', 'mdi:speaker', 'sound', 'enable', 'config')
+        self._ha_binary_sensor_config_publish('Device sound available', 'mdi:speaker', 'sound', 'feature_enabled', 'diagnostic')
+        self._ha_select_config_publish('Device sound schedule mode', 'mdi:speaker', 'sound', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config', schedule_labels)
+        self._ha_number_slider_config_publish('Device sound volume', 'mdi:speaker', 'sound', 'volume', 0, 100, 'config')
         # TODO support aging type 2 items
 
-        self._ha_switch_config_publish('Button lights enable', 'mdi:lightbulb', 'button_lights', 'enable', 'config')
-        self._ha_select_config_publish('Button lights aging type', 'mdi:lightbulb', 'button_lights', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config')
+        self._ha_switch_config_publish('Button lights', 'mdi:lightbulb', 'button_lights', 'enable', 'config')
+        self._ha_select_config_publish('Button lights schedule mode', 'mdi:lightbulb', 'button_lights', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config', schedule_labels)
 
-        self._ha_switch_config_publish('Buttons auto lock enable', 'mdi:lock', 'buttons_auto_lock', 'enable', 'config')
-        self._ha_number_slider_config_publish('Buttons auto lock threshold', 'mdi:lock', 'buttons_auto_lock', 'threshold', 0, 100, 'config')
+        self._ha_switch_config_publish('Automatic button lock', 'mdi:lock', 'buttons_auto_lock', 'enable', 'config')
+        self._ha_number_slider_config_publish('Button lock threshold', 'mdi:lock', 'buttons_auto_lock', 'threshold', 0, 100, 'config')
 
-        self._ha_sensor_config_publish('Power battery level', 'mdi:lightning-bolt', 'power', 'battery_level')
-        self._ha_sensor_config_publish('Power mode', 'mdi:lightning-bolt', 'power', 'mode')
-        self._ha_sensor_config_publish('Power type', 'mdi:lightning-bolt', 'power', 'type')
+        self._ha_sensor_config_publish('Battery level', 'mdi:battery', 'power', 'battery_level', unit_of_measurement='%')
+        self._ha_sensor_config_publish('Active power source', 'mdi:power-plug-battery', 'power', 'mode', value_labels={
+            PowerMode.USB.name: 'USB power',
+            PowerMode.BATTERY.name: 'Battery power',
+        })
+        self._ha_sensor_config_publish('Connected power sources', 'mdi:power-plug-battery', 'power', 'type', value_labels={
+            PowerType.INVALID.name: 'Unknown',
+            PowerType.USB_ONLY.name: 'USB only',
+            PowerType.BATTERY_ONLY.name: 'Battery only',
+            PowerType.USB_AND_BATTERY.name: 'USB and battery',
+        })
 
         self._ha_connection_sensor_config_publish('Connection', 'device', 'online')
         self._ha_binary_sensor_config_publish('Error state', 'mdi:alert', 'device', 'error_state')
@@ -4205,47 +4241,54 @@ class HomeAssistantDiscoveryMqtt:
         self._ha_sensor_config_publish('Hardware version', 'mdi:identifier', 'device', 'hardware_version', entity_category = 'diagnostic')
         self._ha_sensor_config_publish('Product ID', 'mdi:identifier', 'device', 'product_id', entity_category = 'diagnostic')
         self._ha_sensor_config_publish('UUID', 'mdi:identifier', 'device', 'uuid', entity_category = 'diagnostic')
-        self._ha_sensor_timestamp_config_publish('NTP last correct', 'mdi:clock', 'device', 'ntp_last_correct', entity_category = 'diagnostic')
+        self._ha_sensor_timestamp_config_publish('Last clock sync', 'mdi:clock', 'device', 'ntp_last_correct', entity_category = 'diagnostic')
 
-        self._ha_sensor_config_publish('Wifi SSID', 'mdi:wifi', 'wifi', 'ssid', entity_category = 'diagnostic')
-        self._ha_sensor_config_publish('Wifi rssi', 'mdi:wifi', 'wifi', 'rssi', unit_of_measurement = 'dBm', entity_category = 'diagnostic')
-        self._ha_sensor_config_publish('Wifi type', 'mdi:wifi-cog', 'wifi', 'type', entity_category = 'diagnostic')
-        self._ha_sensor_config_publish('Wifi mac address', 'mdi:wifi', 'wifi', 'mac_address', entity_category = 'diagnostic')
+        self._ha_sensor_config_publish('Wi-Fi SSID', 'mdi:wifi', 'wifi', 'ssid', entity_category = 'diagnostic')
+        self._ha_sensor_config_publish('Wi-Fi RSSI', 'mdi:wifi', 'wifi', 'rssi', unit_of_measurement = 'dBm', entity_category = 'diagnostic')
+        self._ha_sensor_config_publish('Wi-Fi type', 'mdi:wifi-cog', 'wifi', 'type', entity_category = 'diagnostic')
+        self._ha_sensor_config_publish('Wi-Fi MAC address', 'mdi:wifi', 'wifi', 'mac_address', entity_category = 'diagnostic')
 
         self._ha_button_config_publish('Reboot', 'mdi:power', 'device', 'reboot', 'diagnostic')
         self._ha_button_config_publish('Factory reset', 'mdi:factory', 'device', 'factory_reset', 'diagnostic')
-        self._ha_button_config_publish('Wifi force reconnect', 'mdi:wifi-cancel', 'device', 'wifi_reconnect', 'diagnostic')
-        self._ha_button_config_publish('SD card format', 'mdi:delete', 'device', 'sd_card_format', 'diagnostic')
+        self._ha_button_config_publish('Reconnect Wi-Fi', 'mdi:wifi-cancel', 'device', 'wifi_reconnect', 'diagnostic')
+        self._ha_button_config_publish('Format SD card', 'mdi:delete', 'device', 'sd_card_format', 'diagnostic')
 
-        self._ha_sensor_config_publish('Food motor state', 'mdi:food', 'food', 'motor_state', entity_category = 'diagnostic')
+        self._ha_sensor_config_publish('Feeder motor state', 'mdi:food', 'food', 'motor_state', entity_category = 'diagnostic')
         self._ha_binary_sensor_config_publish('Food outlet blocked', 'mdi:food', 'food', 'outlet_blocked')
-        self._ha_binary_sensor_config_publish('Food low fill level', 'mdi:food', 'food', 'low_fill_level')
+        self._ha_binary_sensor_config_publish('Low food', 'mdi:food', 'food', 'low_fill_level')
         self._ha_select_config_publish(
-            'Bowl configuration',
+            'Bowl setup',
             'mdi:bowl-mix',
             'food',
             'bowl_mode',
             [ BowlMode.SINGLE_BOWL.name, BowlMode.DOUBLE_BOWL.name ],
             'config',
+            {
+                BowlMode.SINGLE_BOWL.name: 'Single bowl',
+                BowlMode.DOUBLE_BOWL.name: 'Dual bowl',
+            },
         )
 
-        self._ha_text_config_publish('Food plan 1', 'mdi:food', 'food', 'plan_1', 'config')
-        self._ha_text_config_publish('Food plan 2', 'mdi:food', 'food', 'plan_2', 'config')
-        self._ha_text_config_publish('Food plan 3', 'mdi:food', 'food', 'plan_3', 'config')
-        self._ha_text_config_publish('Food plan 4', 'mdi:food', 'food', 'plan_4', 'config')
-        self._ha_text_config_publish('Food plan 5', 'mdi:food', 'food', 'plan_5', 'config')
-        self._ha_text_config_publish('Food plan 6', 'mdi:food', 'food', 'plan_6', 'config')
-        self._ha_text_config_publish('Food plan 7', 'mdi:food', 'food', 'plan_7', 'config')
-        self._ha_text_config_publish('Food plan 8', 'mdi:food', 'food', 'plan_8', 'config')
-        self._ha_text_config_publish('Food plan 9', 'mdi:food', 'food', 'plan_9', 'config')
-        self._ha_button_config_publish('Manual feed', 'mdi:food', 'food', 'manual_feed')
-        self._ha_number_slider_config_publish('Manual feed grain num', 'mdi:hamburger-plus', 'food', 'manual_feed_grain_num', 1, 24)
+        for plan_slot in range(1, 10):
+            self._ha_text_config_publish('Feeding schedule {}'.format(plan_slot), 'mdi:food', 'food', 'plan_{}'.format(plan_slot), 'config')
+        self._ha_button_config_publish('Dispense food now', 'mdi:food', 'food', 'manual_feed')
+        self._ha_number_slider_config_publish('Manual feed portions', 'mdi:hamburger-plus', 'food', 'manual_feed_grain_num', 1, 24)
 
-        self._ha_sensor_config_publish('Food output progress', 'mdi:food', 'food_output', 'progress')
-        self._ha_sensor_timestamp_config_publish('Food output last start', 'mdi:food', 'food_output', 'last_start')
-        self._ha_sensor_timestamp_config_publish('Food output last end', 'mdi:food', 'food_output', 'last_end')
-        self._ha_sensor_config_publish('Food output last grain count', 'mdi:food', 'food_output', 'last_grain_count')
-        self._ha_sensor_config_publish('Food output last trigger', 'mdi:food', 'food_output', 'last_trigger')
+        self._ha_sensor_config_publish('Dispensing status', 'mdi:food', 'food_output', 'progress', value_labels={
+            FoodOutputProgress.IDLE.name: 'Idle',
+            FoodOutputProgress.RUNNING.name: 'Dispensing',
+            FoodOutputProgress.BLOCKED.name: 'Blocked',
+            FoodOutputProgress.ERROR.name: 'Error',
+        })
+        self._ha_sensor_timestamp_config_publish('Last dispense started', 'mdi:food', 'food_output', 'last_start')
+        self._ha_sensor_timestamp_config_publish('Last dispense completed', 'mdi:food', 'food_output', 'last_end')
+        self._ha_sensor_config_publish('Last dispense portions', 'mdi:food', 'food_output', 'last_grain_count')
+        self._ha_sensor_config_publish('Last dispense source', 'mdi:food', 'food_output', 'last_trigger', value_labels={
+            GrainOutputType.INVALID.name: 'Unknown',
+            GrainOutputType.FEED_PLAN.name: 'Feeding schedule',
+            GrainOutputType.MANUAL_FEED.name: 'Manual feed from app',
+            GrainOutputType.MANUAL_FEED_BUTTON.name: 'Feeder button',
+        })
 
     ############################################################################
 
@@ -4334,7 +4377,34 @@ class HomeAssistantDiscoveryMqtt:
 
         self._mqtt_publish(self._ha_config_topic_base_path_get('number', '{}_{}'.format(group, name)), merged_payload)
 
-    def _ha_select_config_publish(self, user_friendly_name: str, icon: str, group: str, name: str, options: [str], entity_category: str = None):
+    def _ha_select_config_publish(
+        self,
+        user_friendly_name: str,
+        icon: str,
+        group: str,
+        name: str,
+        options: [str],
+        entity_category: str = None,
+        option_labels: dict = None,
+    ):
+        displayed_options = options
+        value_template = None
+        command_template = None
+        if option_labels is not None:
+            missing_labels = set(options) - set(option_labels)
+            if missing_labels:
+                raise ValueError(
+                    'Missing display labels for select options: {}'.format(
+                        sorted(missing_labels)
+                    )
+                )
+            displayed_options = [option_labels[option] for option in options]
+            value_template = self._ha_value_template_get(option_labels)
+            command_template = self._ha_value_template_get({
+                label: raw_value
+                for raw_value, label in option_labels.items()
+            })
+
         payload = {
             'name': user_friendly_name,
             'unique_id': self._config_unique_id_get(group, name),
@@ -4342,8 +4412,12 @@ class HomeAssistantDiscoveryMqtt:
             'command_topic': self._device_base_path_get('{}/cmd/{}'.format(group, name)),
             'state_topic': self._device_base_path_get('{}/{}'.format(group, name)),
             'optimistic': 'false',
-            'options': options,
+            'options': displayed_options,
         }
+
+        if value_template is not None:
+            payload['value_template'] = value_template
+            payload['command_template'] = command_template
 
         if not entity_category == None:
             payload = payload | { 'entity_category' : entity_category }
@@ -4352,7 +4426,16 @@ class HomeAssistantDiscoveryMqtt:
 
         self._mqtt_publish(self._ha_config_topic_base_path_get('select', '{}_{}'.format(group, name)), merged_payload)
 
-    def _ha_sensor_config_publish(self, user_friendly_name: str, icon: str, group: str, name: str, unit_of_measurement: str = None, entity_category: str = None):
+    def _ha_sensor_config_publish(
+        self,
+        user_friendly_name: str,
+        icon: str,
+        group: str,
+        name: str,
+        unit_of_measurement: str = None,
+        entity_category: str = None,
+        value_labels: dict = None,
+    ):
         payload = {
             'name': user_friendly_name,
             'unique_id': self._config_unique_id_get(group, name),
@@ -4366,9 +4449,17 @@ class HomeAssistantDiscoveryMqtt:
         if not entity_category == None:
             payload = payload | { 'entity_category' : entity_category }
 
+        if value_labels is not None:
+            payload['value_template'] = self._ha_value_template_get(value_labels)
+
         merged_payload = payload | self._device_flags_get() | self._availability_flags_get()
 
         self._mqtt_publish(self._ha_config_topic_base_path_get('sensor', '{}_{}'.format(group, name)), merged_payload)
+
+    @staticmethod
+    def _ha_value_template_get(value_labels: dict) -> str:
+        encoded_labels = json.dumps(value_labels, separators=(',', ':'))
+        return '{{{{ {}.get(value, value) }}}}'.format(encoded_labels)
 
     def _ha_sensor_timestamp_config_publish(self, user_friendly_name: str, icon: str, group: str, name: str, entity_category: str = None):
         payload = {
@@ -4733,15 +4824,11 @@ class Plaf203(adbase.ADBase):
         self._mqtt_subscribe('button_lights/cmd/enable', self._mqtt_cmd_button_light_enable_cb)
         self._mqtt_subscribe('button_lights/cmd/aging_type', self._mqtt_cmd_button_light_aging_type_cb)
 
-        self._mqtt_subscribe('food/cmd/plan_1', self._mqtt_cmd_food_plans)
-        self._mqtt_subscribe('food/cmd/plan_2', self._mqtt_cmd_food_plans)
-        self._mqtt_subscribe('food/cmd/plan_3', self._mqtt_cmd_food_plans)
-        self._mqtt_subscribe('food/cmd/plan_4', self._mqtt_cmd_food_plans)
-        self._mqtt_subscribe('food/cmd/plan_5', self._mqtt_cmd_food_plans)
-        self._mqtt_subscribe('food/cmd/plan_6', self._mqtt_cmd_food_plans)
-        self._mqtt_subscribe('food/cmd/plan_7', self._mqtt_cmd_food_plans)
-        self._mqtt_subscribe('food/cmd/plan_8', self._mqtt_cmd_food_plans)
-        self._mqtt_subscribe('food/cmd/plan_9', self._mqtt_cmd_food_plans)
+        for plan_slot in range(1, 10):
+            self._mqtt_subscribe(
+                'food/cmd/plan_{}'.format(plan_slot),
+                self._feeding_plan_callback(plan_slot),
+            )
         self._mqtt_subscribe('food/cmd/manual_feed', self._mqtt_cmd_manual_feed_cb)
         self._mqtt_subscribe('food/cmd/manual_feed_grain_num', self._mqtt_cmd_manual_feed_grain_num_cb)
         self._mqtt_subscribe('food/cmd/bowl_mode', self._mqtt_cmd_food_bowl_mode_cb)
@@ -4750,6 +4837,20 @@ class Plaf203(adbase.ADBase):
         self._mqtt_subscribe('device/cmd/factory_reset', self._mqtt_cmd_device_factory_reset)
         self._mqtt_subscribe('device/cmd/wifi_reconnect', self._mqtt_cmd_device_wifi_reconnect)
         self._mqtt_subscribe('device/cmd/sd_card_format', self._mqtt_cmd_device_sd_card_format)
+
+    def _feeding_plan_callback(self, plan_slot: int):
+        def callback(eventname: str, data: dict, kwargs):
+            return self._mqtt_cmd_food_plans(
+                eventname,
+                data,
+                kwargs,
+                plan_slot=plan_slot,
+            )
+
+        # AppDaemon uses callback.__name__ in callback metadata and logs.
+        callback.__name__ = '_mqtt_cmd_food_plan_{}_cb'.format(plan_slot)
+        callback.plan_slot = plan_slot
+        return callback
 
     ############################################################################
 
@@ -5445,7 +5546,14 @@ class Plaf203(adbase.ADBase):
 
     #########################
 
-    def _mqtt_cmd_food_plans(self, eventname: str, data: dict, kwargs):
+    def _mqtt_cmd_food_plans(
+        self,
+        eventname: str,
+        data: dict,
+        kwargs,
+        *,
+        plan_slot: int,
+    ):
         try:
             payload = json.loads(data['payload'])
             food_plan = FoodPlan.from_dict(payload)
@@ -5468,11 +5576,29 @@ class Plaf203(adbase.ADBase):
             )
             return
 
+        if food_plan.id_ != plan_slot:
+            self.logger.warning(
+                "feeding-plan slot/id mismatch ignored",
+                slot=plan_slot,
+                plan_id=food_plan.id_,
+            )
+            return
+
         food_plans: FoodPlans = self.storage.food_plans_get()
         food_plans.plan_set(food_plan)
         self.storage.food_plans_set(food_plans)
 
+        # Home Assistant text entities restore their value from the retained
+        # state topic. Publish the newly persisted desired state before
+        # syncing it so a UI refresh cannot restore the previous plan.
+        self._food_plans_set(food_plans)
+
         self.backend.food_plans_set(food_plans)
+        self.logger.debug(
+            "feeding plan update accepted",
+            slot=plan_slot,
+            plan_id=food_plan.id_,
+        )
 
     def _mqtt_cmd_manual_feed_grain_num_cb(self, eventname: str, data: dict, kwargs):
         self.storage.food_manual_feed_grain_num_set(int(data['payload']))

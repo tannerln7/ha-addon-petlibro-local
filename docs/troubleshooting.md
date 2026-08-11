@@ -98,6 +98,20 @@ in-progress guard for success, failure, malformed output, callback errors, and
 stale identity results. A failed attempt therefore cannot permanently suppress
 the configured retry or a manual refresh.
 
+## A food-plan value reverts after refreshing Home Assistant
+
+Each of the nine Feeding schedule text entities has a matching plan ID. Feeding
+schedule 1 must contain `"id":1`, continuing through `"id":9` for Feeding
+schedule 9. The
+add-on rejects a mismatch and logs `feeding-plan slot/id mismatch ignored`
+without logging the schedule contents.
+
+For a valid update, a debug log reports `feeding plan update accepted`. The
+add-on persists the desired schedule, republishes the retained MQTT state, and
+sends the full schedule to the feeder. If the UI still restores an older value,
+confirm that Home Assistant is running the current add-on version and inspect
+the add-on log for either of those messages.
+
 ## Initial 640x360 stream before HD
 
 Tested PLAF203 firmware can start an HD session with a 640x360 SPS and switch to
@@ -108,9 +122,10 @@ the first and latest SPS even when go2rtc initially advertises 640x360.
 
 ## Feeder resolution returns to P720 when viewing stops
 
-The Home Assistant **Feeder-reported camera resolution** select mirrors the
-device attribute, which can change to P1080 for an active HD TUTK session and
-return to P720 after the viewer disconnects. This does not mean a feeding plan
+The Home Assistant **Feeder camera resolution** select mirrors the device
+attribute, which can change to 1080p for an active HD TUTK session and return to
+720p after the viewer disconnects. MQTT still carries the protocol values
+`P1080` and `P720`. This does not mean a feeding plan
 or unrelated setting changed the requested go2rtc quality. Use
 `actual_resolution` from the camera runtime metadata to determine the SPS
 resolution of an active stream.

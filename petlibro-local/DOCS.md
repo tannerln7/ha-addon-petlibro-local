@@ -111,6 +111,20 @@ The default 15-second probe wait advertises the higher resolution only when that
 transition occurs within the window. Some observed sessions transitioned after
 several minutes and were initially advertised as 640x360.
 
+## Home Assistant controls
+
+The controller publishes readable entity names and select choices through MQTT
+discovery. These labels are presentation-only: existing entity unique IDs,
+MQTT topics, and protocol payloads do not change. In particular, Home Assistant
+shows **Always active** / **Scheduled** for the protocol aging modes, **720p** /
+**1080p** for camera resolution, and **Single bowl** / **Dual bowl** for bowl
+setup while MQTT continues to carry the original enum values.
+
+The nine **Feeding schedule** text entities accept flat JSON. Each document's
+`id` must match its displayed slot number. Accepted edits are persisted,
+republished to retained state, and synchronized to the feeder; a refresh should
+therefore keep the new value.
+
 ## Camera metadata publishing
 
 | Option | Default | Description |

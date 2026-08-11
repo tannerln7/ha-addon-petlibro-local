@@ -105,7 +105,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             first._ha_config_topic_base_path_get('sensor', 'device_uuid'),
         )
 
-    def test_resolution_discovery_identifies_feeder_reported_state(self):
+    def test_resolution_discovery_uses_friendly_labels_without_changing_topics(self):
         discovery = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL')
         discovery.discovery_issue()
 
@@ -113,7 +113,24 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             payload for topic, payload in self.mqtt.published
             if topic.endswith('/camera_resolution/config')
         )
-        self.assertEqual('Feeder-reported camera resolution', config['name'])
+        self.assertEqual('Feeder camera resolution', config['name'])
+        self.assertEqual(['720p', '1080p'], config['options'])
+        self.assertEqual(
+            '{{ {"P720":"720p","P1080":"1080p"}.get(value, value) }}',
+            config['value_template'],
+        )
+        self.assertEqual(
+            '{{ {"720p":"P720","1080p":"P1080"}.get(value, value) }}',
+            config['command_template'],
+        )
+        self.assertEqual(
+            'plaf203/SERIAL/camera/cmd/resolution',
+            config['command_topic'],
+        )
+        self.assertEqual(
+            'plaf203/SERIAL/camera/resolution',
+            config['state_topic'],
+        )
 
     def test_bowl_mode_discovery_exposes_writable_device_configuration(self):
         discovery = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL')
@@ -123,11 +140,15 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             payload for topic, payload in self.mqtt.published
             if topic.endswith('/food_bowl_mode/config')
         )
-        self.assertEqual('Bowl configuration', config['name'])
+        self.assertEqual('Bowl setup', config['name'])
         self.assertEqual(
-            ['SINGLE_BOWL', 'DOUBLE_BOWL'],
+            ['Single bowl', 'Dual bowl'],
             config['options'],
         )
+        self.assertIn('SINGLE_BOWL', config['value_template'])
+        self.assertIn('DOUBLE_BOWL', config['value_template'])
+        self.assertIn('SINGLE_BOWL', config['command_template'])
+        self.assertIn('DOUBLE_BOWL', config['command_template'])
         self.assertEqual(
             'plaf203/SERIAL/food/cmd/bowl_mode',
             config['command_topic'],
@@ -570,7 +591,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         invalid = '{"minute":01}'
 
         p.Plaf203._mqtt_cmd_food_plans(
-            controller, '', {'payload': invalid}, {}
+            controller, '', {'payload': invalid}, {}, plan_slot=1
         )
 
         message = self.ad.logs[-1]
@@ -579,6 +600,193 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertIn('column=12', message)
         self.assertIn('payload_length=13', message)
         self.assertNotIn(invalid, message)
+
+    def test_all_nine_feeding_plan_slots_persist_publish_and_sync(self):
+        class PlanStorage:
+            def __init__(self):
+                self.current = p.FoodPlans.create_empty()
+                self.saved = []
+
+            def food_plans_get(self):
+                return self.current
+
+            def food_plans_set(self, food_plans):
+                self.current = food_plans
+                self.saved.append(food_plans.to_dict())
+
+        storage = PlanStorage()
+        feeder_syncs = []
+        state_publications = []
+        controller = types.SimpleNamespace(
+            storage=storage,
+            backend=types.SimpleNamespace(
+                food_plans_set=lambda food_plans: feeder_syncs.append(
+                    food_plans.to_dict()
+                )
+            ),
+            logger=p.PetlibroLogger(self.ad, "petlibro.controller", "debug"),
+            _mqtt_publish_dict=lambda topic, data, retain: state_publications.append(
+                (topic, data, retain)
+            ),
+        )
+        controller._food_plans_set = types.MethodType(
+            p.Plaf203._food_plans_set,
+            controller,
+        )
+
+        for plan_slot in range(1, 10):
+            payload = {
+                'id': plan_slot,
+                'execution_time': {'hour': 6 + plan_slot, 'minute': plan_slot},
+                'scheduled_days': ['MONDAY'],
+                'enable_audio': False,
+                'play_audio_times': 1,
+                'grain_num': plan_slot,
+            }
+            p.Plaf203._mqtt_cmd_food_plans(
+                controller,
+                '',
+                {'payload': json.dumps(payload)},
+                {},
+                plan_slot=plan_slot,
+            )
+
+        self.assertEqual(9, len(storage.saved))
+        self.assertEqual(9, len(feeder_syncs))
+        self.assertEqual(list(range(1, 10)), [
+            plan['id'] for plan in storage.current.to_dict()['plans']
+        ])
+        latest_by_topic = {
+            topic: (payload, retain)
+            for topic, payload, retain in state_publications
+        }
+        for plan_slot in range(1, 10):
+            topic = 'food/plan_{}'.format(plan_slot)
+            self.assertIn(topic, latest_by_topic)
+            self.assertEqual(plan_slot, latest_by_topic[topic][0]['id'])
+            self.assertTrue(latest_by_topic[topic][1])
+        self.assertEqual(9, sum(
+            'feeding plan update accepted' in message
+            for message in self.ad.logs
+        ))
+
+    def test_feeding_plan_slot_id_mismatch_is_rejected(self):
+        writes = []
+        controller = types.SimpleNamespace(
+            storage=types.SimpleNamespace(
+                food_plans_get=lambda: p.FoodPlans.create_empty(),
+                food_plans_set=lambda food_plans: writes.append('storage'),
+            ),
+            backend=types.SimpleNamespace(
+                food_plans_set=lambda food_plans: writes.append('backend')
+            ),
+            logger=p.PetlibroLogger(self.ad, "petlibro.controller", "debug"),
+            _food_plans_set=lambda food_plans: writes.append('state'),
+        )
+        payload = {
+            'id': 1,
+            'execution_time': {'hour': 7, 'minute': 0},
+            'scheduled_days': ['MONDAY'],
+            'enable_audio': False,
+            'play_audio_times': 1,
+            'grain_num': 1,
+        }
+
+        p.Plaf203._mqtt_cmd_food_plans(
+            controller,
+            '',
+            {'payload': json.dumps(payload)},
+            {},
+            plan_slot=2,
+        )
+
+        self.assertEqual([], writes)
+        message = self.ad.logs[-1]
+        self.assertIn('feeding-plan slot/id mismatch ignored', message)
+        self.assertIn('slot=2', message)
+        self.assertIn('plan_id=1', message)
+        self.assertNotIn(json.dumps(payload), message)
+
+    def test_feeding_plan_subscriptions_bind_each_slot(self):
+        controller = p.Plaf203.__new__(p.Plaf203)
+        subscriptions = []
+        received_slots = []
+        controller._mqtt_subscribe = (
+            lambda topic, callback: subscriptions.append((topic, callback))
+        )
+        controller._mqtt_cmd_food_plans = (
+            lambda eventname, data, kwargs, *, plan_slot: received_slots.append(
+                plan_slot
+            )
+        )
+
+        controller._user_input_topics_subscribe()
+
+        plan_subscriptions = [
+            (topic, callback)
+            for topic, callback in subscriptions
+            if topic.startswith('food/cmd/plan_')
+        ]
+        self.assertEqual(9, len(plan_subscriptions))
+        for expected_slot, (topic, callback) in enumerate(
+            plan_subscriptions,
+            start=1,
+        ):
+            self.assertEqual(
+                'food/cmd/plan_{}'.format(expected_slot),
+                topic,
+            )
+            self.assertEqual(
+                '_mqtt_cmd_food_plan_{}_cb'.format(expected_slot),
+                callback.__name__,
+            )
+            self.assertEqual(expected_slot, callback.plan_slot)
+            callback('', {'payload': '{}'}, {})
+
+        self.assertEqual(list(range(1, 10)), received_slots)
+
+    def test_discovery_labels_do_not_change_backend_contract(self):
+        discovery = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL')
+        discovery.discovery_issue()
+
+        configs = {
+            topic: payload
+            for topic, payload in self.mqtt.published
+        }
+        schedule = configs[
+            'homeassistant/select/plaf203_SERIAL/camera_aging_type/config'
+        ]
+        self.assertEqual('Camera schedule mode', schedule['name'])
+        self.assertEqual(['Always active', 'Scheduled'], schedule['options'])
+        self.assertEqual(
+            'plaf203/SERIAL/camera/cmd/aging_type',
+            schedule['command_topic'],
+        )
+        self.assertIn('NON_SCHEDULED_ENABLED', schedule['value_template'])
+        self.assertIn('SCHEDULED_ENABLED', schedule['command_template'])
+
+        power = configs[
+            'homeassistant/sensor/plaf203_SERIAL/power_type/config'
+        ]
+        self.assertEqual('Connected power sources', power['name'])
+        self.assertEqual(
+            'plaf203/SERIAL/power/type',
+            power['state_topic'],
+        )
+        self.assertIn('USB_AND_BATTERY', power['value_template'])
+
+        plan = configs[
+            'homeassistant/text/plaf203_SERIAL/food_plan_9/config'
+        ]
+        self.assertEqual('Feeding schedule 9', plan['name'])
+        self.assertEqual(
+            'plaf203/SERIAL/food/cmd/plan_9',
+            plan['command_topic'],
+        )
+        self.assertEqual(
+            'plaf203/SERIAL/food/plan_9',
+            plan['state_topic'],
+        )
 
     def test_device_config_acknowledgement_requires_matching_pending_request(self):
         backend = p.Backend()
