@@ -3,12 +3,9 @@
 ## Add-on does not start
 
 Check the Home Assistant app/add-on log. Configuration errors are reported
-without echoing option values. Confirm:
-
-- `device_ip` is a valid address reachable from the host;
-- `uid` is exactly 20 letters or numbers;
-- `serial` contains the feeder's MQTT `DL_DEVICE_ID`;
-- MQTT and go2rtc ports are between 1 and 65535.
+without echoing option values. Confirm that `lan_cidr` is a valid IPv4 network
+no larger than `/16`, the MQTT client ID contains only letters, numbers,
+underscores, or hyphens, and MQTT and go2rtc ports are between 1 and 65535.
 
 For Docker Compose, run:
 
@@ -27,16 +24,42 @@ status.
 Test RTSP from a trusted host:
 
 ```bash
-STREAM_NAME=petlibro_feeder ./scripts/test-stream.sh
+STREAM_NAME=petlibro_plaf203_your_device_serial ./scripts/test-stream.sh
 ```
 
 The equivalent direct command is:
 
 ```bash
 timeout 300s ffmpeg -hide_banner -rtsp_transport tcp \
-  -i "rtsp://127.0.0.1:8554/petlibro_feeder" \
+  -i "rtsp://127.0.0.1:8554/petlibro_plaf203_your_device_serial" \
   -an -f null -
 ```
+
+Automatic stream names have the form
+`petlibro_plaf203_<sanitized_serial>`. Read the retained discovery state or
+open the go2rtc web interface to obtain the exact name.
+
+## Device remains in discovery
+
+Inspect these retained topics:
+
+```text
+petlibro_local/discovery/devices
+petlibro_local/PLAF203/YOUR_DEVICE_SERIAL/discovery/state
+```
+
+- No device entry: verify feeder topics reach this broker and begin with
+  `dl/PLAF203/<serial>/device/`.
+- `uid_discovered: false`: keep the backend running and reboot the feeder. The
+  startup event is not assumed to be retained, so a reboot performed before
+  the backend subscribed may need to be repeated.
+- `ip_resolved: false`: confirm `lan_cidr`, host networking, UDP reachability,
+  and that the feeder is on the same routed LAN.
+- `stream_configured: false`: both a valid UID and resolved address are needed.
+
+Publish `all` to `petlibro_local/discovery/refresh` for a manual address refresh.
+The backend keeps the last known IP after failure and retries with configured
+backoff.
 
 ## Initial 640x360 stream before HD
 
@@ -62,10 +85,10 @@ loss, ACK progress, SPS transitions, and assembler decisions without requiring
 raw dumps.
 
 Enable `enable_debug_dumps` only when repeatable packet evidence is necessary.
-The add-on writes:
+The add-on writes one pair per stream:
 
-- `/data/petlibro_c2d.dat`
-- `/data/petlibro_d2c.dat`
+- `/data/petlibro_c2d_<stream>.dat`
+- `/data/petlibro_d2c_<stream>.dat`
 
 Disable dumping after a short reproduction because files grow continuously and
 contain decrypted device/session traffic.
@@ -99,10 +122,11 @@ petlibro_local/PLAF203/YOUR_DEVICE_SERIAL/camera/availability
 ```
 
 If availability stays offline, inspect the add-on log for a short camera
-metadata warning and confirm `/data/petlibro_camera_status.json` exists inside
-the container. A missing file means go2rtc has not started a producer or could
-not write status. A malformed file publishes `status: error`; a file older than
-three configured heartbeat intervals publishes `status: offline`.
+metadata warning and confirm
+`/data/petlibro_camera_status_<stream>.json` exists inside the container. A
+missing file means go2rtc has not started a producer or could not write status.
+A malformed file publishes `status: error`; a file older than three configured
+heartbeat intervals publishes `status: offline`.
 
 Do not point frontend integrations at the file. Use the documented
 [MQTT camera contract](mqtt-camera-contract.md).

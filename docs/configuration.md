@@ -11,10 +11,14 @@ users configure the same values in the ignored `docker/.env` file.
 | `mqtt_port` | `MQTT_PORT` | AppDaemon MQTT plugin and PLAF203 config sync |
 | `mqtt_username` | `MQTT_USERNAME` | AppDaemon MQTT plugin |
 | `mqtt_password` | `MQTT_PASSWORD` | AppDaemon MQTT plugin secrets file |
-| `device_ip` | `DEVICE_IP` | go2rtc Petlibro URL host |
-| `product` | `PRODUCT` | Validation; currently PLAF203 only |
-| `serial` | `SERIAL` | PLAF203 MQTT topics and Home Assistant entity IDs |
-| `uid` | `UID` | go2rtc Petlibro camera session |
+| `mqtt_client_id` | `MQTT_CLIENT_ID` | Unique AppDaemon broker client ID |
+| `device_discovery` | `DEVICE_DISCOVERY` | MQTT identity discovery coordinator |
+| `product_filter` | `PRODUCT_FILTER` | Accepted feeder topic product |
+| `lan_cidr` | `LAN_CIDR` | LAN_SEARCH3 camera-address search network |
+| `ip_resolve_timeout_seconds` | `IP_RESOLVE_TIMEOUT_SECONDS` | Per-search timeout |
+| `ip_refresh_interval_minutes` | `IP_REFRESH_INTERVAL_MINUTES` | Healthy address refresh age |
+| `ip_retry_backoff_seconds` | `IP_RETRY_BACKOFF_SECONDS` | Failed-search retry floor |
+| `devices` | `DEVICES_JSON` | Optional manual device override array |
 | `go2rtc_stream_name` | `GO2RTC_STREAM_NAME` | go2rtc stream and RTSP URL |
 | `camera_quality` | `CAMERA_QUALITY` | Petlibro URL `quality` query |
 | `ack_mode` | `ACK_MODE` | Petlibro URL `ack` query |
@@ -38,15 +42,53 @@ behavior.
 |---|---|
 | `/data/go2rtc.yaml` | Listener configuration and generated Petlibro stream URL |
 | `/data/appdaemon.yaml` | AppDaemon core, namespace, and MQTT plugin configuration |
-| `/data/apps.yaml` | PLAF203 app configuration |
+| `/data/apps.yaml` | Discovery coordinator and one PLAF203 app per device |
 | `/data/appdaemon-secrets.yaml` | MQTT username and password only |
+| `/data/devices.json` | Atomic mode-0600 device identity/address registry |
 | `/data/appdaemon/` | AppDaemon app links and persistent namespace state |
-| `/data/petlibro_camera_status.json` | Internal atomic go2rtc camera runtime status; mode 0600 |
-| `/data/petlibro_c2d.dat` | Optional decrypted client-to-device dump |
-| `/data/petlibro_d2c.dat` | Optional decrypted device-to-client dump |
+| `/data/petlibro_camera_status_<stream>.json` | Per-stream atomic go2rtc camera runtime status; mode 0600 |
+| `/data/petlibro_c2d_<stream>.dat` | Optional decrypted client-to-device dump |
+| `/data/petlibro_d2c_<stream>.dat` | Optional decrypted device-to-client dump |
 
 Generated YAML and secrets files are written with mode 0600. Do not copy them
 into Git or attach them to public issues.
+
+## Device discovery and overrides
+
+The coordinator builds `serial -> UID -> IP -> stream` from feeder MQTT traffic
+and LAN_SEARCH3. A valid device gets a direct-IP URL, so normal playback does
+not repeat the slower subnet scan. It periodically refreshes cached addresses
+and re-resolves after camera status becomes stale, offline, or error. A failed
+lookup retains the last address, marks readiness false, and retries with
+backoff. go2rtc restarts only when the rendered config bytes change.
+
+For Docker, `DEVICES_JSON` is a JSON array. For Home Assistant, use the
+structured `devices` list. Example advanced override:
+
+```yaml
+devices:
+  - name: kitchen_feeder
+    product: PLAF203
+    serial: YOUR_DEVICE_SERIAL
+    uid: YOUR_DEVICE_UID
+    ip_address: 192.168.1.100
+```
+
+Omit the list for normal automatic setup.
+
+The image includes the same resolver used by the coordinator:
+
+```bash
+petlibro-resolve \
+  --uid YOUR_DEVICE_UID \
+  --subnet 192.168.1.0/24 \
+  --timeout 10s \
+  --json
+```
+
+It emits one JSON result with `resolved`, `ip_address`, `method`, and elapsed
+time fields and exits nonzero when resolution fails. The coordinator invokes it
+without a shell and does not log the UID or raw result.
 
 ## Camera metadata topics
 

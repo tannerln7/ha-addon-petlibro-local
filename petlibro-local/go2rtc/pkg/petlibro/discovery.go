@@ -1,6 +1,7 @@
 package petlibro
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -14,7 +15,43 @@ import (
 
 var discoveryCache sync.Map
 
-func discoverByUID(conn *net.UDPConn, uid string, nonce []byte, subnets []string, verbose bool) (*net.UDPAddr, error) {
+const defaultDiscoveryTimeout = 2 * time.Second
+
+// ResolveUID finds a Petlibro camera on the LAN using the same UID-specific
+// LAN_SEARCH3 exchange used by Dial. It is exported for the companion
+// petlibro-resolve command; callers get a fresh socket and discovery attempt.
+func ResolveUID(uid string, subnets []string, timeout time.Duration) (net.IP, error) {
+	if len(uid) != 20 {
+		return nil, fmt.Errorf("petlibro: uid must be 20 chars (got %d)", len(uid))
+	}
+	if timeout <= 0 {
+		return nil, fmt.Errorf("petlibro: discovery timeout must be positive")
+	}
+	for _, subnet := range subnets {
+		if _, network, err := net.ParseCIDR(subnet); err != nil || network.IP.To4() == nil {
+			return nil, fmt.Errorf("petlibro: invalid IPv4 subnet %q", subnet)
+		}
+	}
+
+	conn, err := net.ListenUDP("udp4", nil)
+	if err != nil {
+		return nil, fmt.Errorf("petlibro: discovery bind: %w", err)
+	}
+	defer conn.Close()
+
+	nonce := make([]byte, 8)
+	if _, err = rand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("petlibro: discovery nonce: %w", err)
+	}
+	clearDiscoveryCache(uid, subnets)
+	addr, err := discoverByUID(conn, uid, nonce, subnets, timeout, false)
+	if err != nil {
+		return nil, err
+	}
+	return append(net.IP(nil), addr.IP...), nil
+}
+
+func discoverByUID(conn *net.UDPConn, uid string, nonce []byte, subnets []string, timeout time.Duration, verbose bool) (*net.UDPAddr, error) {
 	cacheKey := discoveryCacheKey(uid, subnets)
 	if cached, ok := discoveryCache.Load(cacheKey); ok {
 		ip := net.ParseIP(cached.(string))
@@ -36,7 +73,7 @@ func discoverByUID(conn *net.UDPConn, uid string, nonce []byte, subnets []string
 	buf := make([]byte, 65535)
 	var sent, sendErrs, recv, ignored int
 	var lastSendErr error
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		for _, target := range targets {
 			if _, err := conn.WriteToUDP(req, target); err != nil {

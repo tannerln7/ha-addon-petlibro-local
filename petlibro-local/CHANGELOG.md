@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Discover feeder serials and camera UIDs from MQTT startup traffic.
+- Resolve and refresh device IP addresses with the existing LAN_SEARCH3 Go
+  implementation, then persist a private device registry.
+- Generate direct-IP go2rtc streams and per-device controller/status mappings
+  for multiple discovered feeders.
+- Publish retained discovery readiness and restart go2rtc only when its
+  generated configuration changes.
+
 ## 0.1.0
 
 - Package patched go2rtc and the PLAF203 AppDaemon controller together.

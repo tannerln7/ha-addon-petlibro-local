@@ -4,17 +4,26 @@ The add-on generates go2rtc and AppDaemon configuration in `/data` each time a
 service starts. Users should edit options through Home Assistant rather than
 changing files inside the container.
 
-## Required device values
+## Discovery-first setup
 
 | Option | Default | Description |
 |---|---|---|
-| `device_ip` | empty | PLAF203 feeder/camera LAN address |
-| `serial` | empty | MQTT device serial (`DL_DEVICE_ID`) used in feeder topics |
-| `uid` | empty | Exact 20-character camera UID used by the LAN/TUTK session |
-| `product` | `PLAF203` | Supported product family; currently fixed to PLAF203 |
+| `device_discovery` | `true` | Observe supported feeder MQTT topics and configure discovered devices |
+| `product_filter` | `PLAF203` | Supported product family; currently fixed to PLAF203 |
+| `lan_cidr` | `192.168.1.0/24` | IPv4 network searched by LAN_SEARCH3; maximum size `/16` |
+| `ip_resolve_timeout_seconds` | `10` | Timeout for each UID-to-IP lookup |
+| `ip_refresh_interval_minutes` | `360` | Maximum age of a healthy cached address |
+| `ip_retry_backoff_seconds` | `60` | Minimum delay after a failed lookup |
+| `devices` | `[]` | Optional advanced manual overrides |
 
-Startup fails with a configuration error until `device_ip`, `serial`, and
-`uid` contain valid values.
+Normal setup does not require a serial, UID, or IP address. Start the backend,
+then reboot the feeder so the coordinator can observe `DEVICE_START_EVENT`.
+The generated stream appears after serial, UID, and LAN address discovery.
+
+An override item may contain `name`, `product`, `serial`, `uid`, and
+`ip_address`. `serial` identifies the record; supplied UID/IP fields win over
+automatic values. Existing installs with the former top-level `serial`, `uid`,
+and `device_ip` options are migrated into this registry when all three exist.
 
 ## MQTT
 
@@ -24,6 +33,7 @@ Startup fails with a configuration error until `device_ip`, `serial`, and
 | `mqtt_port` | `1883` | Broker TCP port |
 | `mqtt_username` | empty | AppDaemon's broker username |
 | `mqtt_password` | empty | AppDaemon's broker password; stored in a mode-0600 secrets file |
+| `mqtt_client_id` | `petlibro_local_backend` | Unique MQTT client ID for this backend instance |
 
 These credentials authenticate the backend to the broker. They do not provision
 the feeder or replace its factory-provisioned broker credentials. The feeder's
@@ -34,7 +44,7 @@ account in the external broker.
 
 | Option | Default | Description |
 |---|---|---|
-| `go2rtc_stream_name` | `petlibro_feeder` | Name used in go2rtc and RTSP URLs |
+| `go2rtc_stream_name` | `petlibro_feeder` | Compatibility name for a migrated legacy device; discovered devices derive a product/serial name |
 | `camera_quality` | `hd` | Requested `hd` or `sd` stream |
 | `ack_mode` | `hybrid` | Petlibro media-window ACK mapping: `high`, `contig`, or `hybrid` |
 | `send_delay_ctrl` | `true` | Sends the AVAPI data-delay control before `IPCAM_START` |

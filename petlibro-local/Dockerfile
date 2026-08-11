@@ -6,7 +6,9 @@ COPY go2rtc/go.mod go2rtc/go.sum ./
 RUN go mod download
 COPY go2rtc/ ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/go2rtc .
+    go build -trimpath -ldflags="-s -w" -o /out/go2rtc . \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/petlibro-resolve ./cmd/petlibro-resolve
 
 FROM ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.23
 
@@ -18,8 +20,10 @@ RUN apk add --no-cache ffmpeg jq \
     && /opt/appdaemon-venv/bin/pip install --no-cache-dir "AppDaemon>=4.5,<5"
 
 COPY --from=go2rtc-builder /out/go2rtc /usr/local/bin/go2rtc
+COPY --from=go2rtc-builder /out/petlibro-resolve /usr/local/bin/petlibro-resolve
 COPY appdaemon/src/plaf203.py /opt/petlibro-local/appdaemon/plaf203.py
 COPY appdaemon/src/camera_metadata.py /opt/petlibro-local/appdaemon/camera_metadata.py
+COPY appdaemon/src/device_discovery.py /opt/petlibro-local/appdaemon/device_discovery.py
 COPY templates/ /opt/petlibro-local/templates/
 COPY render_config.py /usr/local/bin/petlibro-render-config
 COPY run.sh /usr/local/bin/petlibro-local-run
@@ -27,6 +31,7 @@ COPY rootfs/ /
 
 RUN chmod 0755 \
         /usr/local/bin/go2rtc \
+        /usr/local/bin/petlibro-resolve \
         /usr/local/bin/petlibro-render-config \
         /usr/local/bin/petlibro-local-run \
         /etc/services.d/go2rtc/run \

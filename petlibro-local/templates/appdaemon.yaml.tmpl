@@ -13,8 +13,13 @@ appdaemon:
     MQTT:
       type: mqtt
       namespace: mqtt
+      client_id: ${MQTT_CLIENT_ID}
       client_host: ${MQTT_HOST}
       client_port: ${MQTT_PORT}
       client_user: !secret mqtt_username
       client_password: !secret mqtt_password
+      client_topics:
+        - dl/+/+/device/#
+        - plaf203/#
+        - petlibro_local/discovery/refresh
       force_start: true

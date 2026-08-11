@@ -81,6 +81,19 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.mqtt = FakeMqtt()
         self.client = p.Client(self.ad, self.mqtt, 'SERIAL')
 
+    def test_home_assistant_discovery_identity_is_unique_per_serial(self):
+        first = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL_ONE')
+        second = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL_TWO')
+
+        self.assertNotEqual(
+            first._device_info_get()['identifiers'],
+            second._device_info_get()['identifiers'],
+        )
+        self.assertEqual(
+            'homeassistant/sensor/plaf203_SERIAL_ONE/device_uuid/config',
+            first._ha_config_topic_base_path_get('sensor', 'device_uuid'),
+        )
+
     def test_ntp_and_ntp_sync_include_capture_dst_schema(self):
         response = NTP_RESPONSE['payload']
         sync_request = NTP_SYNC_REQUEST['payload']

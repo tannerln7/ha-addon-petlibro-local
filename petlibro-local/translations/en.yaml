@@ -11,18 +11,30 @@ configuration:
   mqtt_password:
     name: MQTT password
     description: Optional password for the AppDaemon backend identity.
-  device_ip:
-    name: Device IP
-    description: LAN address of the PLAF203 feeder camera.
-  product:
-    name: Product
-    description: Supported Petlibro product family.
-  serial:
-    name: Device serial
-    description: Feeder DL_DEVICE_ID used in MQTT topics.
-  uid:
-    name: Camera UID
-    description: Exact 20-character UID used for the local camera session.
+  mqtt_client_id:
+    name: MQTT client ID
+    description: Unique broker client ID for this backend instance.
+  device_discovery:
+    name: Device discovery
+    description: Discover feeder serials and camera UIDs from MQTT, then resolve camera addresses on the LAN.
+  product_filter:
+    name: Product filter
+    description: Petlibro product family accepted by automatic discovery.
+  lan_cidr:
+    name: LAN subnet
+    description: IPv4 subnet searched for camera UIDs with the local TUTK LAN protocol.
+  ip_resolve_timeout_seconds:
+    name: IP resolution timeout
+    description: Seconds allowed for each local camera-address search.
+  ip_refresh_interval_minutes:
+    name: IP refresh interval
+    description: Minutes before a healthy cached camera address is resolved again.
+  ip_retry_backoff_seconds:
+    name: IP retry backoff
+    description: Minimum seconds between failed or unhealthy camera-address searches.
+  devices:
+    name: Manual device overrides
+    description: Optional advanced serial, UID, and IP overrides; automatic discovery normally leaves this empty.
   go2rtc_stream_name:
     name: Stream name
     description: Name used in go2rtc and RTSP URLs.

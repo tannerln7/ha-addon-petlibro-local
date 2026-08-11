@@ -10,8 +10,10 @@ cd "${repo_root}"
 "${python_bin}" -m py_compile \
     petlibro-local/render_config.py \
     petlibro-local/appdaemon/src/camera_metadata.py \
+    petlibro-local/appdaemon/src/device_discovery.py \
     petlibro-local/appdaemon/src/plaf203.py \
     petlibro-local/appdaemon/tests/test_camera_metadata.py \
+    petlibro-local/appdaemon/tests/test_device_discovery.py \
     tests/test_render_config.py
 
 if "${python_bin}" -c 'import appdaemon' >/dev/null 2>&1; then
@@ -23,7 +25,11 @@ fi
 (
     cd petlibro-local/go2rtc
     go test ./pkg/petlibro -count=1
+    go test -race ./pkg/petlibro -count=1
+    go test ./cmd/petlibro-resolve -count=1
+    go vet ./pkg/petlibro ./cmd/petlibro-resolve
     go build -o /tmp/petlibro-local-go2rtc .
+    go build -o /tmp/petlibro-resolve ./cmd/petlibro-resolve
 )
 
 docker compose --env-file docker/.env.example \

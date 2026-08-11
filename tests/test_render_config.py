@@ -1,3 +1,4 @@
+import copy
 import importlib.util
 import json
 import os
@@ -9,6 +10,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "petlibro-local" / "render_config.py"
+TEMPLATES = ROOT / "petlibro-local" / "templates"
 SPEC = importlib.util.spec_from_file_location("render_config", MODULE_PATH)
 render_config = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -16,145 +18,180 @@ SPEC.loader.exec_module(render_config)
 
 
 class RenderConfigTests(unittest.TestCase):
-    def options(self):
+    def options(self, *, devices=None):
+        options = copy.deepcopy(render_config.DEFAULTS)
+        options.update(
+            {
+                "mqtt_host": "192.0.2.10",
+                "mqtt_username": "example-user",
+                "mqtt_password": "example-password",
+                "verbose_logs": True,
+                "enable_debug_dumps": True,
+                "devices": devices or [],
+            }
+        )
+        return options
+
+    @staticmethod
+    def manual_device(serial="EXAMPLE123"):
         return {
-            "mqtt_host": "192.168.1.10",
-            "mqtt_port": 1883,
-            "mqtt_username": "example-user",
-            "mqtt_password": "example-password",
-            "device_ip": "192.168.1.100",
+            "name": "petlibro_feeder",
             "product": "PLAF203",
-            "serial": "YOUR_DEVICE_SERIAL",
+            "serial": serial,
             "uid": "PLAF20300000000ABCD0",
-            "go2rtc_stream_name": "petlibro_feeder",
-            "camera_quality": "hd",
-            "ack_mode": "hybrid",
-            "send_delay_ctrl": True,
-            "hd_probe_wait_ms": 15000,
-            "go2rtc_api_port": 1984,
-            "go2rtc_rtsp_port": 8554,
-            "go2rtc_webrtc_port": 8555,
-            "publish_camera_metadata": True,
-            "camera_metadata_topic_prefix": "",
-            "camera_metadata_interval_seconds": 30,
-            "verbose_logs": True,
-            "enable_debug_dumps": True,
+            "ip_address": "192.0.2.100",
         }
 
-    def test_renders_configs_and_protects_mqtt_password(self):
+    def render_all(self, options, data_dir):
+        source = data_dir / "plaf203.py"
+        metadata = data_dir / "camera_metadata.py"
+        discovery = data_dir / "device_discovery.py"
+        for path in (source, metadata, discovery):
+            path.write_text("# synthetic app source\n", encoding="utf-8")
+        environment = {
+            "PETLIBRO_APP_SOURCE": str(source),
+            "PETLIBRO_CAMERA_METADATA_SOURCE": str(metadata),
+            "PETLIBRO_DEVICE_DISCOVERY_SOURCE": str(discovery),
+        }
+        go2rtc_changed = render_config.render_go2rtc(options, data_dir, TEMPLATES)
+        with patch.dict(os.environ, environment):
+            appdaemon_changed = render_config.render_appdaemon(
+                options, data_dir, TEMPLATES
+            )
+        return go2rtc_changed, appdaemon_changed
+
+    def test_renders_discovery_and_direct_ip_stream_without_leaking_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:
             data_dir = Path(temporary)
-            source = data_dir / "plaf203.py"
-            source.write_text("# synthetic app source\n", encoding="utf-8")
-            status_file = data_dir / "petlibro_camera_status.json"
-            status_file.write_text('{"status":"stale"}\n', encoding="utf-8")
-            options = self.options()
+            stale = data_dir / "petlibro_camera_status_petlibro_feeder.json"
+            stale.write_text('{"status":"stale"}\n', encoding="utf-8")
+            options = self.options(devices=[self.manual_device()])
             render_config.validate(options)
-            render_config.render_go2rtc(
-                options, data_dir, ROOT / "petlibro-local" / "templates"
-            )
-            with patch.dict(os.environ, {"PETLIBRO_APP_SOURCE": str(source)}):
-                render_config.render_appdaemon(
-                    options, data_dir, ROOT / "petlibro-local" / "templates"
-                )
+            self.assertEqual((True, True), self.render_all(options, data_dir))
 
-            generated = "\n".join(
-                path.read_text(encoding="utf-8")
-                for path in (
-                    data_dir / "go2rtc.yaml",
-                    data_dir / "appdaemon.yaml",
-                    data_dir / "apps.yaml",
-                    data_dir / "appdaemon-secrets.yaml",
-                )
-            )
-            self.assertIn("ack=hybrid", generated)
-            self.assertIn("hd_probe_wait_ms=15000", generated)
+            go2rtc = (data_dir / "go2rtc.yaml").read_text(encoding="utf-8")
+            apps = (data_dir / "apps.yaml").read_text(encoding="utf-8")
+            appdaemon = (data_dir / "appdaemon.yaml").read_text(encoding="utf-8")
+            registry = (data_dir / "devices.json").read_text(encoding="utf-8")
+            self.assertIn("petlibro://192.0.2.100?", go2rtc)
+            self.assertNotIn("subnet=", go2rtc)
+            self.assertIn("ack=hybrid", go2rtc)
             self.assertIn(
-                "status_file=%2Fdata%2Fpetlibro_camera_status.json", generated
+                "status_file=%2Fdata%2Fpetlibro_camera_status_petlibro_feeder.json",
+                go2rtc,
             )
-            self.assertIn("dump_c2d_plain=%2Fdata%2Fpetlibro_c2d.dat", generated)
-            self.assertIn(
-                'camera_metadata_topic_prefix: "petlibro_local/PLAF203/'
-                'YOUR_DEVICE_SERIAL/camera"',
-                generated,
-            )
-            self.assertIn('mqtt_password: "example-password"', generated)
-            self.assertFalse(status_file.exists())
+            self.assertIn("dump_c2d_plain=%2Fdata%2Fpetlibro_c2d_petlibro_feeder.dat", go2rtc)
+            self.assertIn("petlibro_discovery:", apps)
+            self.assertIn("plaf203_example123:", apps)
+            self.assertIn('client_id: "petlibro_local_backend"', appdaemon)
+            self.assertNotIn("example-password", registry)
+            self.assertNotIn("example-user", registry)
+            saved_device = json.loads(registry)["devices"]["PLAF203/EXAMPLE123"]
+            self.assertTrue(saved_device["ready"]["stream_configured"])
+            self.assertFalse(stale.exists())
+            self.assertEqual(0o600, (data_dir / "devices.json").stat().st_mode & 0o777)
             self.assertEqual(
                 0o600, (data_dir / "appdaemon-secrets.yaml").stat().st_mode & 0o777
             )
 
-    def test_ignores_legacy_unknown_options(self):
+    def test_renders_multiple_resolved_streams(self):
         with tempfile.TemporaryDirectory() as temporary:
             data_dir = Path(temporary)
-            source = data_dir / "plaf203.py"
-            source.write_text("# synthetic app source\n", encoding="utf-8")
-            options = self.options()
-            options["product_secret"] = "legacy-value"
-            (data_dir / "options.json").write_text(
-                json.dumps(options), encoding="utf-8"
+            second = self.manual_device("SECOND456")
+            second.update(
+                name="kitchen_feeder",
+                uid="PLAF20300000000EFGH1",
+                ip_address="192.0.2.101",
             )
+            options = self.options(devices=[self.manual_device(), second])
+            render_config.validate(options)
+            self.render_all(options, data_dir)
+            go2rtc = (data_dir / "go2rtc.yaml").read_text(encoding="utf-8")
+            apps = (data_dir / "apps.yaml").read_text(encoding="utf-8")
+            self.assertIn("petlibro_feeder:", go2rtc)
+            self.assertIn("kitchen_feeder:", go2rtc)
+            self.assertIn("plaf203_example123:", apps)
+            self.assertIn("plaf203_second456:", apps)
 
-            loaded = render_config.load_options(data_dir)
-            render_config.validate(loaded)
-            render_config.render_go2rtc(
-                loaded, data_dir, ROOT / "petlibro-local" / "templates"
-            )
-            with patch.dict(os.environ, {"PETLIBRO_APP_SOURCE": str(source)}):
-                render_config.render_appdaemon(
-                    loaded, data_dir, ROOT / "petlibro-local" / "templates"
-                )
+    def test_unchanged_render_does_not_rewrite_configs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            options = self.options(devices=[self.manual_device()])
+            self.assertEqual((True, True), self.render_all(options, data_dir))
+            live_status = data_dir / "petlibro_camera_status_petlibro_feeder.json"
+            live_status.write_text('{"status":"online"}\n', encoding="utf-8")
+            self.assertEqual((False, False), self.render_all(options, data_dir))
+            self.assertTrue(live_status.exists())
 
-            generated = "\n".join(
-                path.read_text(encoding="utf-8")
-                for path in (
-                    data_dir / "go2rtc.yaml",
-                    data_dir / "appdaemon.yaml",
-                    data_dir / "apps.yaml",
-                    data_dir / "appdaemon-secrets.yaml",
-                )
-            )
-            self.assertNotIn("legacy-value", generated)
-
-    def test_loads_home_assistant_options_json(self):
+    def test_migrates_legacy_options_and_ignores_unknown_secret(self):
         with tempfile.TemporaryDirectory() as temporary:
             data_dir = Path(temporary)
             options = self.options()
+            options.update(
+                device_ip="192.0.2.100",
+                product="PLAF203",
+                serial="EXAMPLE123",
+                uid="PLAF20300000000ABCD0",
+                product_secret="must-not-leak",
+            )
             (data_dir / "options.json").write_text(json.dumps(options), encoding="utf-8")
             loaded = render_config.load_options(data_dir)
-            self.assertEqual("PLAF203", loaded["product"])
-            self.assertTrue(loaded["verbose_logs"])
+            render_config.validate(loaded)
+            self.render_all(loaded, data_dir)
+            generated = "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in data_dir.glob("*.yaml")
+            )
+            self.assertIn("petlibro://192.0.2.100?", generated)
+            self.assertNotIn("must-not-leak", generated)
 
-    def test_rejects_invalid_uid_without_echoing_secret(self):
-        options = self.options()
-        options["uid"] = "too-short"
-        with self.assertRaisesRegex(ValueError, "uid must contain exactly 20"):
+    def test_loads_discovery_first_home_assistant_options(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            raw = {"mqtt_host": "core-mosquitto", "lan_cidr": "10.20.0.0/16"}
+            (data_dir / "options.json").write_text(json.dumps(raw), encoding="utf-8")
+            loaded = render_config.load_options(data_dir)
+            render_config.validate(loaded)
+            self.assertTrue(loaded["device_discovery"])
+            self.assertEqual([], loaded["devices"])
+            self.assertEqual("10.20.0.0/16", loaded["lan_cidr"])
+
+    def test_empty_registry_starts_discovery_without_a_camera_stream(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            options = self.options()
             render_config.validate(options)
+            self.render_all(options, data_dir)
+            self.assertIn(
+                "streams:\n  {}",
+                (data_dir / "go2rtc.yaml").read_text(encoding="utf-8"),
+            )
+            apps = (data_dir / "apps.yaml").read_text(encoding="utf-8")
+            self.assertIn("petlibro_discovery:", apps)
+            self.assertNotIn("class: Plaf203", apps)
 
-    def test_rejects_invalid_camera_metadata_options(self):
+    def test_rejects_invalid_manual_uid_without_echoing_value(self):
+        device = self.manual_device()
+        device["uid"] = "too-short"
+        with self.assertRaisesRegex(ValueError, r"devices\[0\]\.uid"):
+            render_config.validate(self.options(devices=[device]))
+
+    def test_rejects_oversized_or_non_ipv4_discovery_network(self):
         options = self.options()
-        options["camera_metadata_topic_prefix"] = "petlibro/#"
-        with self.assertRaisesRegex(ValueError, "without wildcards"):
+        options["lan_cidr"] = "10.0.0.0/8"
+        with self.assertRaisesRegex(ValueError, "no larger than /16"):
             render_config.validate(options)
-
-        options = self.options()
-        options["camera_metadata_interval_seconds"] = 4
-        with self.assertRaisesRegex(ValueError, "between 5 and 300"):
+        options["lan_cidr"] = "2001:db8::/64"
+        with self.assertRaisesRegex(ValueError, "IPv4"):
             render_config.validate(options)
 
     def test_disabling_camera_metadata_omits_status_export(self):
         with tempfile.TemporaryDirectory() as temporary:
             data_dir = Path(temporary)
-            options = self.options()
+            options = self.options(devices=[self.manual_device()])
             options["publish_camera_metadata"] = False
             render_config.validate(options)
-            render_config.render_go2rtc(
-                options, data_dir, ROOT / "petlibro-local" / "templates"
-            )
-            render_config.render_appdaemon(
-                options, data_dir, ROOT / "petlibro-local" / "templates"
-            )
-
+            self.render_all(options, data_dir)
             self.assertNotIn(
                 "status_file", (data_dir / "go2rtc.yaml").read_text(encoding="utf-8")
             )

@@ -20,10 +20,14 @@ DEFAULTS = {
     "mqtt_port": 1883,
     "mqtt_username": "",
     "mqtt_password": "",
-    "device_ip": "",
-    "product": "PLAF203",
-    "serial": "",
-    "uid": "",
+    "mqtt_client_id": "petlibro_local_backend",
+    "device_discovery": True,
+    "product_filter": "PLAF203",
+    "lan_cidr": "192.168.1.0/24",
+    "ip_resolve_timeout_seconds": 10,
+    "ip_refresh_interval_minutes": 360,
+    "ip_retry_backoff_seconds": 60,
+    "devices": [],
     "go2rtc_stream_name": "petlibro_feeder",
     "camera_quality": "hd",
     "ack_mode": "hybrid",
@@ -40,7 +44,15 @@ DEFAULTS = {
 }
 
 ENV_KEYS = {key: key.upper() for key in DEFAULTS}
+ENV_KEYS["devices"] = "DEVICES_JSON"
+LEGACY_ENV_KEYS = {
+    "device_ip": "DEVICE_IP",
+    "product": "PRODUCT",
+    "serial": "SERIAL",
+    "uid": "UID",
+}
 BOOL_KEYS = {
+    "device_discovery",
     "send_delay_ctrl",
     "publish_camera_metadata",
     "verbose_logs",
@@ -48,6 +60,9 @@ BOOL_KEYS = {
 }
 INT_KEYS = {
     "mqtt_port",
+    "ip_resolve_timeout_seconds",
+    "ip_refresh_interval_minutes",
+    "ip_retry_backoff_seconds",
     "hd_probe_wait_ms",
     "go2rtc_api_port",
     "go2rtc_rtsp_port",
@@ -79,8 +94,20 @@ def load_options(data_dir: Path) -> dict[str, object]:
             for key, env_key in ENV_KEYS.items()
             if env_key in os.environ
         }
+        raw.update(
+            {
+                key: os.environ[env_key]
+                for key, env_key in LEGACY_ENV_KEYS.items()
+                if env_key in os.environ
+            }
+        )
 
     options = DEFAULTS | raw
+    if isinstance(options["devices"], str):
+        try:
+            options["devices"] = json.loads(options["devices"])
+        except json.JSONDecodeError as err:
+            raise ValueError("devices must be a JSON array") from err
     for key in BOOL_KEYS:
         options[key] = parse_bool(options[key], key)
     for key in INT_KEYS:
@@ -92,22 +119,58 @@ def load_options(data_dir: Path) -> dict[str, object]:
 
 
 def validate(options: dict[str, object]) -> None:
-    if options["product"] != "PLAF203":
-        raise ValueError("product must be PLAF203")
+    if options["product_filter"] != "PLAF203":
+        raise ValueError("product_filter must be PLAF203")
 
-    device_ip = str(options["device_ip"])
     try:
-        ipaddress.ip_address(device_ip)
+        network = ipaddress.ip_network(str(options["lan_cidr"]), strict=False)
     except ValueError as err:
-        raise ValueError("device_ip must be a valid IPv4 or IPv6 address") from err
+        raise ValueError("lan_cidr must be a valid IPv4 CIDR") from err
+    if network.version != 4 or network.prefixlen < 16:
+        raise ValueError("lan_cidr must be an IPv4 network no larger than /16")
 
-    serial = str(options["serial"])
-    if not serial or not re.fullmatch(r"[A-Za-z0-9_-]+", serial):
-        raise ValueError("serial must contain only letters, numbers, underscores, or hyphens")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", str(options["mqtt_client_id"])):
+        raise ValueError("mqtt_client_id contains unsupported characters")
+    if not 1 <= int(options["ip_resolve_timeout_seconds"]) <= 60:
+        raise ValueError("ip_resolve_timeout_seconds must be between 1 and 60")
+    if not 1 <= int(options["ip_refresh_interval_minutes"]) <= 10080:
+        raise ValueError("ip_refresh_interval_minutes must be between 1 and 10080")
+    if not 5 <= int(options["ip_retry_backoff_seconds"]) <= 3600:
+        raise ValueError("ip_retry_backoff_seconds must be between 5 and 3600")
 
-    uid = str(options["uid"])
-    if not re.fullmatch(r"[A-Za-z0-9]{20}", uid):
-        raise ValueError("uid must contain exactly 20 letters or numbers")
+    devices = options["devices"]
+    if not isinstance(devices, list):
+        raise ValueError("devices must be a list")
+    device_keys = set()
+    stream_names = set()
+    for index, device in enumerate(devices):
+        if not isinstance(device, dict):
+            raise ValueError(f"devices[{index}] must be an object")
+        product = str(device.get("product", "PLAF203"))
+        if product != "PLAF203":
+            raise ValueError(f"devices[{index}].product must be PLAF203")
+        serial = str(device.get("serial", ""))
+        if not serial or not re.fullmatch(r"[A-Za-z0-9_-]+", serial):
+            raise ValueError(
+                f"devices[{index}].serial must contain letters, numbers, underscores, or hyphens"
+            )
+        device_key = f"{product}/{serial}"
+        if device_key in device_keys:
+            raise ValueError(f"devices[{index}] duplicates {device_key}")
+        device_keys.add(device_key)
+        stream_name = stream_name_for(product, serial, str(device.get("name", "")))
+        if stream_name in stream_names:
+            raise ValueError(f"devices[{index}] has a duplicate stream name")
+        stream_names.add(stream_name)
+        uid = str(device.get("uid", ""))
+        if uid and not re.fullmatch(r"[A-Za-z0-9]{20}", uid):
+            raise ValueError(f"devices[{index}].uid must contain exactly 20 letters or numbers")
+        ip_address = str(device.get("ip_address", ""))
+        if ip_address:
+            try:
+                ipaddress.ip_address(ip_address)
+            except ValueError as err:
+                raise ValueError(f"devices[{index}].ip_address is invalid") from err
 
     stream_name = str(options["go2rtc_stream_name"])
     if not re.fullmatch(r"[A-Za-z0-9_-]+", stream_name):
@@ -139,16 +202,24 @@ def yaml_string(value: object) -> str:
     return json.dumps(str(value), ensure_ascii=True)
 
 
-def atomic_write(path: Path, content: str, mode: int = 0o600) -> None:
+def atomic_write(path: Path, content: str, mode: int = 0o600) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = content.encode("utf-8")
+    try:
+        if path.read_bytes() == encoded:
+            os.chmod(path, mode)
+            return False
+    except FileNotFoundError:
+        pass
     with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=path.parent, delete=False
+        mode="wb", dir=path.parent, delete=False
     ) as handle:
-        handle.write(content)
+        handle.write(encoded)
         handle.flush()
         os.fchmod(handle.fileno(), mode)
         temporary = Path(handle.name)
     temporary.replace(path)
+    return True
 
 
 def render_template(template_dir: Path, name: str, values: dict[str, str]) -> str:
@@ -156,27 +227,200 @@ def render_template(template_dir: Path, name: str, values: dict[str, str]) -> st
     return Template(source).substitute(values)
 
 
-def render_go2rtc(options: dict[str, object], data_dir: Path, template_dir: Path) -> None:
-    status_path = data_dir / "petlibro_camera_status.json"
-    if status_path.is_symlink() or status_path.exists():
-        status_path.unlink()
+def stream_name_for(product: str, serial: str, preferred: str = "") -> str:
+    if preferred:
+        candidate = re.sub(r"[^A-Za-z0-9_-]+", "_", preferred).strip("_")
+        if candidate:
+            return candidate[:96]
+    product_part = re.sub(r"[^A-Za-z0-9]+", "_", product).strip("_").lower()
+    serial_part = re.sub(r"[^A-Za-z0-9]+", "_", serial).strip("_").lower()
+    return f"petlibro_{product_part}_{serial_part}"[:96]
 
-    query = {
-        "uid": str(options["uid"]),
-        "quality": str(options["camera_quality"]),
-        "ack": str(options["ack_mode"]),
-        "send_delay_ctrl": "1" if options["send_delay_ctrl"] else "0",
-        "hd_probe_wait_ms": str(options["hd_probe_wait_ms"]),
+
+def status_file_for(stream_name: str) -> str:
+    return f"/data/petlibro_camera_status_{stream_name}.json"
+
+
+def _empty_registry() -> dict[str, object]:
+    return {"schema_version": 1, "devices": {}}
+
+
+def _default_ready() -> dict[str, bool]:
+    return {
+        "mqtt_discovered": False,
+        "uid_discovered": False,
+        "ip_resolved": False,
+        "stream_configured": False,
+        "camera_online": False,
     }
-    if options["publish_camera_metadata"]:
-        query["status_file"] = "/data/petlibro_camera_status.json"
-    if options["verbose_logs"]:
-        query["verbose"] = "1"
-    if options["enable_debug_dumps"]:
-        query["dump_c2d_plain"] = "/data/petlibro_c2d.dat"
-        query["dump_d2c_plain"] = "/data/petlibro_d2c.dat"
 
-    stream_url = f"petlibro://{options['device_ip']}?{urlencode(query)}"
+
+def load_registry(data_dir: Path) -> dict[str, object]:
+    path = data_dir / "devices.json"
+    try:
+        registry = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return _empty_registry()
+    if not isinstance(registry, dict) or registry.get("schema_version") != 1:
+        raise ValueError("devices.json has an unsupported schema")
+    devices = registry.get("devices")
+    if not isinstance(devices, dict):
+        raise ValueError("devices.json devices must be an object")
+    registry["devices"] = {
+        key: _sanitize_registry_device(device)
+        for key, device in devices.items()
+        if isinstance(key, str) and isinstance(device, dict)
+    }
+    return registry
+
+
+def _sanitize_registry_device(device: dict[str, object]) -> dict[str, object]:
+    allowed = {
+        "product",
+        "serial",
+        "uid",
+        "uid_source",
+        "ip_address",
+        "ip_resolution_method",
+        "stream_name",
+        "mqtt_topic_root",
+        "last_mqtt_seen",
+        "last_ip_resolved",
+        "last_ip_attempt",
+        "manual_override",
+        "ready",
+    }
+    clean = {key: value for key, value in device.items() if key in allowed}
+    ready = clean.get("ready")
+    clean["ready"] = _default_ready() | (ready if isinstance(ready, dict) else {})
+    return clean
+
+
+def _manual_devices(options: dict[str, object]) -> list[dict[str, object]]:
+    devices = [dict(item) for item in options["devices"]]
+    legacy_serial = str(options.get("serial", ""))
+    legacy_uid = str(options.get("uid", ""))
+    legacy_ip = str(options.get("device_ip", ""))
+    if legacy_serial and legacy_uid and legacy_ip:
+        devices.append(
+            {
+                "name": str(options.get("go2rtc_stream_name", "petlibro_feeder")),
+                "product": str(options.get("product", options["product_filter"])),
+                "serial": legacy_serial,
+                "uid": legacy_uid,
+                "ip_address": legacy_ip,
+                "legacy": True,
+            }
+        )
+    return devices
+
+
+def prepare_registry(options: dict[str, object], data_dir: Path) -> dict[str, object]:
+    registry = load_registry(data_dir)
+    devices = registry["devices"]
+    assert isinstance(devices, dict)
+    manual_devices = _manual_devices(options)
+    manual_keys = {
+        f"{item.get('product', options['product_filter'])}/{item.get('serial', '')}"
+        for item in manual_devices
+    }
+    for key, current in devices.items():
+        if isinstance(current, dict) and key not in manual_keys:
+            current.pop("manual_override", None)
+    for manual in manual_devices:
+        product = str(manual.get("product", options["product_filter"]))
+        serial = str(manual["serial"])
+        key = f"{product}/{serial}"
+        current = devices.get(key)
+        if not isinstance(current, dict):
+            current = {}
+        preferred = str(manual.get("name", ""))
+        current.update(
+            {
+                "product": product,
+                "serial": serial,
+                "stream_name": stream_name_for(product, serial, preferred),
+                "mqtt_topic_root": f"dl/{product}/{serial}/device",
+            }
+        )
+        uid = str(manual.get("uid", ""))
+        if uid:
+            current["uid"] = uid
+            current["uid_source"] = "manual_override"
+        ip_address = str(manual.get("ip_address", ""))
+        if ip_address:
+            current["ip_address"] = ip_address
+            current["ip_resolution_method"] = "manual_override"
+        ready = current.get("ready")
+        ready = _default_ready() | (ready if isinstance(ready, dict) else {})
+        ready["uid_discovered"] = bool(current.get("uid"))
+        ready["ip_resolved"] = bool(current.get("ip_address"))
+        ready["stream_configured"] = ready["uid_discovered"] and ready["ip_resolved"]
+        current["ready"] = ready
+        current["manual_override"] = True
+        devices[key] = current
+    atomic_write(
+        data_dir / "devices.json",
+        json.dumps(registry, indent=2, sort_keys=True) + "\n",
+    )
+    return registry
+
+
+def _registry_devices(registry: dict[str, object]) -> list[dict[str, object]]:
+    devices = registry["devices"]
+    assert isinstance(devices, dict)
+    return [
+        device
+        for _key, device in sorted(devices.items())
+        if isinstance(device, dict)
+        and device.get("product") == "PLAF203"
+        and re.fullmatch(r"[A-Za-z0-9_-]+", str(device.get("serial", "")))
+    ]
+
+
+def _valid_ip(value: object) -> bool:
+    try:
+        ipaddress.ip_address(str(value))
+    except ValueError:
+        return False
+    return True
+
+
+def render_go2rtc(options: dict[str, object], data_dir: Path, template_dir: Path) -> bool:
+    registry = prepare_registry(options, data_dir)
+    streams = []
+    status_paths = []
+    for device in _registry_devices(registry):
+        uid = str(device.get("uid", ""))
+        ip_address = str(device.get("ip_address", ""))
+        serial = str(device.get("serial", ""))
+        product = str(device.get("product", options["product_filter"]))
+        if not re.fullmatch(r"[A-Za-z0-9]{20}", uid) or not _valid_ip(ip_address):
+            continue
+        stream_name = stream_name_for(
+            product, serial, str(device.get("stream_name", ""))
+        )
+        status_path = status_file_for(stream_name)
+        local_status_path = data_dir / Path(status_path).name
+        status_paths.append(local_status_path)
+
+        query = {
+            "uid": uid,
+            "quality": str(options["camera_quality"]),
+            "ack": str(options["ack_mode"]),
+            "send_delay_ctrl": "1" if options["send_delay_ctrl"] else "0",
+            "hd_probe_wait_ms": str(options["hd_probe_wait_ms"]),
+        }
+        if options["publish_camera_metadata"]:
+            query["status_file"] = status_path
+        if options["verbose_logs"]:
+            query["verbose"] = "1"
+        if options["enable_debug_dumps"]:
+            query["dump_c2d_plain"] = f"/data/petlibro_c2d_{stream_name}.dat"
+            query["dump_d2c_plain"] = f"/data/petlibro_d2c_{stream_name}.dat"
+        stream_url = f"petlibro://{ip_address}?{urlencode(query)}"
+        streams.append(f"  {stream_name}: {yaml_string(stream_url)}")
+
     level = "debug" if options["verbose_logs"] else "info"
     values = {
         "LOG_LEVEL": yaml_string("info"),
@@ -184,45 +428,106 @@ def render_go2rtc(options: dict[str, object], data_dir: Path, template_dir: Path
         "API_LISTEN": yaml_string(f":{options['go2rtc_api_port']}"),
         "RTSP_LISTEN": yaml_string(f":{options['go2rtc_rtsp_port']}"),
         "WEBRTC_LISTEN": yaml_string(f":{options['go2rtc_webrtc_port']}"),
-        "STREAM_NAME": yaml_string(options["go2rtc_stream_name"]),
-        "STREAM_URL": yaml_string(stream_url),
+        "STREAMS": "\n".join(streams) if streams else "  {}",
     }
-    atomic_write(
+    changed = atomic_write(
         data_dir / "go2rtc.yaml",
         render_template(template_dir, "go2rtc.yaml.tmpl", values),
     )
+    if changed:
+        for status_path in status_paths:
+            if status_path.is_symlink() or status_path.exists():
+                status_path.unlink()
+    return changed
 
 
-def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: Path) -> None:
-    topic_prefix = str(options["camera_metadata_topic_prefix"]) or (
-        f"petlibro_local/{options['product']}/{options['serial']}/camera"
-    )
+def _yaml_entry(name: str, values: dict[str, object]) -> list[str]:
+    lines = [f"{name}:"]
+    for key, value in values.items():
+        if isinstance(value, bool):
+            rendered = "true" if value else "false"
+        elif isinstance(value, int):
+            rendered = str(value)
+        else:
+            rendered = yaml_string(value)
+        lines.append(f"  {key}: {rendered}")
+    return lines
+
+
+def _camera_topic_prefix(options: dict[str, object], product: str, serial: str) -> str:
+    configured = str(options["camera_metadata_topic_prefix"]).rstrip("/")
+    if configured:
+        return f"{configured}/{product}/{serial}/camera"
+    return f"petlibro_local/{product}/{serial}/camera"
+
+
+def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: Path) -> bool:
+    registry = prepare_registry(options, data_dir)
     common = {
         "MQTT_HOST": yaml_string(options["mqtt_host"]),
         "MQTT_PORT": str(options["mqtt_port"]),
-        "SERIAL": yaml_string(options["serial"]),
-        "PRODUCT": yaml_string(options["product"]),
-        "STREAM_NAME": yaml_string(options["go2rtc_stream_name"]),
-        "CAMERA_QUALITY": yaml_string(options["camera_quality"]),
-        "HD_PROBE_WAIT_MS": str(options["hd_probe_wait_ms"]),
-        "RTSP_PORT": str(options["go2rtc_rtsp_port"]),
-        "PUBLISH_CAMERA_METADATA": (
-            "true" if options["publish_camera_metadata"] else "false"
-        ),
-        "CAMERA_STATUS_FILE": yaml_string("/data/petlibro_camera_status.json"),
-        "CAMERA_METADATA_TOPIC_PREFIX": yaml_string(topic_prefix),
-        "CAMERA_METADATA_INTERVAL_SECONDS": str(
-            options["camera_metadata_interval_seconds"]
-        ),
+        "MQTT_CLIENT_ID": yaml_string(options["mqtt_client_id"]),
     }
-    atomic_write(
+    appdaemon_changed = atomic_write(
         data_dir / "appdaemon.yaml",
         render_template(template_dir, "appdaemon.yaml.tmpl", common),
     )
-    atomic_write(
-        data_dir / "apps.yaml",
-        render_template(template_dir, "apps.yaml.tmpl", common),
+
+    apps_lines = _yaml_entry(
+        "petlibro_discovery",
+        {
+            "module": "device_discovery",
+            "class": "PetlibroDiscovery",
+            "enabled": options["device_discovery"],
+            "product_filter": options["product_filter"],
+            "lan_cidr": options["lan_cidr"],
+            "registry_file": "/data/devices.json",
+            "resolver_command": "/usr/local/bin/petlibro-resolve",
+            "renderer_command": "/usr/local/bin/petlibro-render-config",
+            "go2rtc_service": "/run/service/go2rtc",
+            "ip_resolve_timeout_seconds": options["ip_resolve_timeout_seconds"],
+            "ip_refresh_interval_minutes": options["ip_refresh_interval_minutes"],
+            "ip_retry_backoff_seconds": options["ip_retry_backoff_seconds"],
+            "publish_discovery_ip": True,
+        },
     )
+    for device in _registry_devices(registry):
+        product = str(device.get("product", options["product_filter"]))
+        serial = str(device.get("serial", ""))
+        if not serial or product != "PLAF203":
+            continue
+        stream_name = stream_name_for(
+            product, serial, str(device.get("stream_name", ""))
+        )
+        app_name = f"plaf203_{re.sub(r'[^A-Za-z0-9_]+', '_', serial).lower()}"
+        apps_lines.extend(
+            _yaml_entry(
+                app_name,
+                {
+                    "module": "plaf203",
+                    "class": "Plaf203",
+                    "product": product,
+                    "serial_number": serial,
+                    "mqtt_host": options["mqtt_host"],
+                    "mqtt_port": options["mqtt_port"],
+                    "https_addr": options["mqtt_host"],
+                    "tutk_p2p_region": "REGION_US",
+                    "go2rtc_stream_name": stream_name,
+                    "camera_quality": options["camera_quality"],
+                    "hd_probe_wait_ms": options["hd_probe_wait_ms"],
+                    "go2rtc_rtsp_port": options["go2rtc_rtsp_port"],
+                    "publish_camera_metadata": options["publish_camera_metadata"],
+                    "camera_status_file": status_file_for(stream_name),
+                    "camera_metadata_topic_prefix": _camera_topic_prefix(
+                        options, product, serial
+                    ),
+                    "camera_metadata_interval_seconds": options[
+                        "camera_metadata_interval_seconds"
+                    ],
+                },
+            )
+        )
+    apps_changed = atomic_write(data_dir / "apps.yaml", "\n".join(apps_lines) + "\n")
     atomic_write(
         data_dir / "appdaemon-secrets.yaml",
         "mqtt_username: "
@@ -247,8 +552,16 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
                 "/opt/petlibro-local/appdaemon/camera_metadata.py",
             )
         ),
+        app_dir / "device_discovery.py": Path(
+            os.environ.get(
+                "PETLIBRO_DEVICE_DISCOVERY_SOURCE",
+                "/opt/petlibro-local/appdaemon/device_discovery.py",
+            )
+        ),
     }
     for link, target in links.items():
+        if link.is_symlink() and link.readlink() == target:
+            continue
         if link.is_symlink() or link.exists():
             link.unlink()
         link.symlink_to(target)
@@ -258,6 +571,7 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
         atomic_write(marker, "enabled\n")
     elif marker.exists():
         marker.unlink()
+    return appdaemon_changed or apps_changed
 
 
 def main() -> int:

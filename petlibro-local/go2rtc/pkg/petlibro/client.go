@@ -550,7 +550,7 @@ func Dial(rawURL string) (*Client, error) {
 		return nil, err
 	}
 	if cam == nil {
-		cam, err = discoverByUID(udp, uid, nonce, q["subnet"], verbose)
+		cam, err = discoverByUID(udp, uid, nonce, q["subnet"], defaultDiscoveryTimeout, verbose)
 		if err != nil {
 			_ = udp.Close()
 			return nil, err

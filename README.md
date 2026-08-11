@@ -41,28 +41,49 @@ To install from a repository that Home Assistant can access:
    this area **Settings → Add-ons → Add-on Store**.
 2. Open the three-dot menu, choose **Repositories**, and add the URL above.
 3. Install **Petlibro Local backend**.
-4. Configure the feeder and MQTT options before starting it.
-5. Start the app and inspect its log for both the go2rtc and AppDaemon startup
-   messages.
+4. Configure the MQTT broker connection and the feeder LAN subnet.
+5. Start the app, then reboot or power-cycle the feeder so its startup event is
+   visible to the discovery coordinator.
+6. Watch the app log until MQTT identity discovery, LAN address resolution, and
+   stream configuration complete.
 
 For local development before a remote exists, copy the
 [`petlibro-local`](petlibro-local/) directory into
 `/addons/petlibro-local` on Home Assistant OS, reload the app store, and install
 it from **Local apps**.
 
-Required device-specific options are:
-
-- `device_ip`: feeder/camera LAN address, for example `192.168.1.100`
-- `serial`: feeder MQTT device serial (`DL_DEVICE_ID`)
-- `uid`: exact 20-character camera UID
+Serial, camera UID, and device IP are normally automatic. The backend reads the
+serial from `dl/PLAF203/<serial>/device/...`, reads the UID from the feeder's
+`DEVICE_START_EVENT`, and resolves the current address with the camera's
+LAN_SEARCH3 protocol over `lan_cidr`. It persists this mapping in a private
+registry and creates one direct-IP go2rtc stream per discovered feeder. The
+optional `devices` list is an advanced fallback for manual overrides.
 
 The default broker hostname is `core-mosquitto`. A broker must already exist,
 and it must authenticate both the backend identity configured here and the
 physical feeder's separately provisioned identity. See the
 [add-on option reference](petlibro-local/DOCS.md) for every setting.
 
-The backend also publishes retained camera runtime state for frontend
-integrations under `petlibro_local/<product>/<serial>/camera`. See the
+The complete first-run sequence is:
+
+1. Install and configure the MQTT broker, including the physical feeder's own
+   account.
+2. Add the local DNS redirects or routing needed for the feeder to reach that
+   broker.
+3. Install, configure, and start Petlibro Local Backend.
+4. Reboot or power-cycle the feeder after the backend is subscribed.
+5. The backend discovers the serial from the MQTT topic and the UID from the
+   startup event.
+6. It resolves the IP over `lan_cidr`, saves `/data/devices.json`, and generates
+   the direct-IP go2rtc stream.
+7. Open the generated stream to start the lazy camera producer.
+
+If the feeder was rebooted before the backend started, reboot it once more; the
+UID startup event is not assumed to be retained by the broker.
+
+The backend publishes retained discovery progress under
+`petlibro_local/<product>/<serial>/discovery/state` and retained camera runtime
+state under `petlibro_local/<product>/<serial>/camera`. See the
 [MQTT camera contract](docs/mqtt-camera-contract.md) for the versioned JSON
 schema and availability behavior.
 
@@ -73,17 +94,17 @@ With the default configuration and host networking:
 | Service | URL or port |
 |---|---|
 | go2rtc web/API | `http://HOME_ASSISTANT_HOST:1984/` |
-| RTSP | `rtsp://HOME_ASSISTANT_HOST:8554/petlibro_feeder` |
+| RTSP | `rtsp://HOME_ASSISTANT_HOST:8554/petlibro_plaf203_<serial>` |
 | WebRTC transport | TCP and UDP `8555` |
 
 The generated camera source is equivalent to:
 
 ```yaml
 streams:
-  petlibro_feeder: petlibro://192.168.1.100?uid=YOUR_DEVICE_UID&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000
+  petlibro_plaf203_your_device_serial: petlibro://192.168.1.100?uid=YOUR_DEVICE_UID&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000
 ```
 
-Replace `YOUR_DEVICE_UID` with the exact 20-character value from the device.
+This generated URL is illustrative; users do not normally enter these values.
 
 ## Docker / Debian LXC fallback
 

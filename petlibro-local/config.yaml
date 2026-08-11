@@ -27,10 +27,14 @@ options:
   mqtt_port: 1883
   mqtt_username: ""
   mqtt_password: ""
-  device_ip: ""
-  product: PLAF203
-  serial: ""
-  uid: ""
+  mqtt_client_id: petlibro_local_backend
+  device_discovery: true
+  product_filter: PLAF203
+  lan_cidr: 192.168.1.0/24
+  ip_resolve_timeout_seconds: 10
+  ip_refresh_interval_minutes: 360
+  ip_retry_backoff_seconds: 60
+  devices: []
   go2rtc_stream_name: petlibro_feeder
   camera_quality: hd
   ack_mode: hybrid
@@ -49,10 +53,19 @@ schema:
   mqtt_port: port
   mqtt_username: str
   mqtt_password: password
-  device_ip: str
-  product: list(PLAF203)
-  serial: str
-  uid: str
+  mqtt_client_id: str
+  device_discovery: bool
+  product_filter: list(PLAF203)
+  lan_cidr: str
+  ip_resolve_timeout_seconds: int(1,60)
+  ip_refresh_interval_minutes: int(1,10080)
+  ip_retry_backoff_seconds: int(5,3600)
+  devices:
+    - name: str
+      product: list(PLAF203)
+      serial: str
+      uid: str
+      ip_address: str
   go2rtc_stream_name: str
   camera_quality: list(hd|sd)
   ack_mode: list(high|contig|hybrid)

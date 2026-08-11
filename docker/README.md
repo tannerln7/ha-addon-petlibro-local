@@ -24,13 +24,18 @@ cp docker/.env.example docker/.env
 chmod 600 docker/.env
 ```
 
-Edit `docker/.env` and replace the generic values. `UID` must be exactly 20
-characters. The file is ignored by Git.
+Edit `docker/.env` with the broker address and the feeder network in
+`LAN_CIDR`. Serial, UID, and IP are discovered automatically. The file is
+ignored by Git.
 
 `MQTT_USERNAME` and `MQTT_PASSWORD` authenticate AppDaemon to the broker. The
 feeder uses its own factory/device MQTT account, which must be provisioned in
 the external broker separately; this backend does not accept or configure the
 feeder's product secret.
+
+Start the container before rebooting the feeder so it can observe the
+`DEVICE_START_EVENT` UID. Advanced installations can set `DEVICES_JSON` to a
+JSON array of manual device overrides; leave it as `[]` for normal setup.
 
 ## Build and run
 

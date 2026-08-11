@@ -32,7 +32,7 @@ state and availability are refreshed at the configured heartbeat interval.
   "schema_version": 1,
   "product": "PLAF203",
   "serial": "YOUR_DEVICE_SERIAL",
-  "stream_name": "petlibro_feeder",
+  "stream_name": "petlibro_plaf203_your_device_serial",
   "status": "online",
   "requested_quality": "hd",
   "configured_hd_probe_wait_ms": 15000,
@@ -54,8 +54,8 @@ state and availability are refreshed at the configured heartbeat interval.
     "observed": true,
     "elapsed_ms": 10000
   },
-  "rtsp_path": "petlibro_feeder",
-  "rtsp_url_hint": "rtsp://<backend-host>:8554/petlibro_feeder",
+  "rtsp_path": "petlibro_plaf203_your_device_serial",
+  "rtsp_url_hint": "rtsp://<backend-host>:8554/petlibro_plaf203_your_device_serial",
   "last_update": "2026-01-01T00:00:10Z",
   "health": {
     "ffmpeg_errors": null,
@@ -104,3 +104,39 @@ configuration values cannot leak through the contract.
 
 The JSON file under `/data` is an internal service boundary, not a frontend API.
 Frontend integrations should consume only the MQTT topics documented here.
+
+## Discovery readiness contract
+
+Device setup progress is published separately as retained QoS 1 JSON:
+
+```text
+petlibro_local/<product>/<serial>/discovery/state
+petlibro_local/discovery/devices
+```
+
+The per-device payload contains operational identity and readiness only. It
+does not publish the camera UID, broker credentials, or product secrets.
+
+```json
+{
+  "schema_version": 1,
+  "product": "PLAF203",
+  "serial": "YOUR_DEVICE_SERIAL",
+  "mqtt_topic_root": "dl/PLAF203/YOUR_DEVICE_SERIAL/device",
+  "uid_discovered": true,
+  "uid_source": "DEVICE_START_EVENT.uuid",
+  "ip_resolved": true,
+  "ip_resolution_method": "lan_search3",
+  "ip_address": "192.168.1.100",
+  "stream_name": "petlibro_plaf203_your_device_serial",
+  "stream_configured": true,
+  "camera_online": false,
+  "last_mqtt_seen": "2026-01-01T00:00:00Z",
+  "last_ip_resolved": "2026-01-01T00:00:05Z",
+  "last_update": "2026-01-01T00:00:10Z"
+}
+```
+
+`petlibro_local/discovery/devices` wraps all current per-device payloads in a
+`devices` array. Publish `all`, a serial, or `{"serial":"..."}` to
+`petlibro_local/discovery/refresh` to request LAN address resolution.

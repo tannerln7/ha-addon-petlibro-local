@@ -4134,8 +4134,8 @@ class HomeAssistantDiscoveryMqtt:
 
     def _device_info_get(self):
         return {
-            'identifiers': 'plaf203',
-            'name': 'Pet libro cat feeder',
+            'identifiers': 'plaf203_{}'.format(self.serial_number),
+            'name': 'Petlibro cat feeder {}'.format(self.serial_number),
             'model': 'PLAF203',
             'manufacturer': 'Pet libro',
             'sw_version': 'unknown',
@@ -4153,7 +4153,7 @@ class HomeAssistantDiscoveryMqtt:
         return "plaf203/{}/{}".format(self.serial_number, topic)
 
     def _ha_config_topic_base_path_get(self, component: str, name: str):
-        return "homeassistant/{}/plaf203/{}/config".format(component, name)
+        return "homeassistant/{}/plaf203_{}/{}/config".format(component, self.serial_number, name)
 
 ########################################################################################################################
 

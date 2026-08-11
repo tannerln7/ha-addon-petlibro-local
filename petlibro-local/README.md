@@ -10,9 +10,10 @@ The configured MQTT username and password authenticate this backend only.
 
 ## Before starting
 
-Configure the MQTT broker, feeder LAN address, feeder serial, and exact
-20-character camera UID on the **Configuration** tab. Then start the add-on and
-open **Log** to confirm that both go2rtc and AppDaemon started successfully.
+Configure the MQTT broker and feeder LAN subnet on the **Configuration** tab.
+Start the add-on, then reboot or power-cycle the feeder. The backend discovers
+the serial from MQTT, the camera UID from `DEVICE_START_EVENT`, and the current
+IP with LAN_SEARCH3. Open **Log** to follow discovery and stream setup.
 
 The go2rtc web interface and API are exposed on port `1984`:
 
@@ -20,11 +21,12 @@ The go2rtc web interface and API are exposed on port `1984`:
 http://HOME_ASSISTANT_HOST:1984/
 ```
 
-The default RTSP stream is:
+Each feeder gets an RTSP stream derived from its product and serial:
 
 ```text
-rtsp://HOME_ASSISTANT_HOST:8554/petlibro_feeder
+rtsp://HOME_ASSISTANT_HOST:8554/petlibro_plaf203_<serial>
 ```
 
 Camera sessions start when a viewer opens a stream. See [DOCS.md](DOCS.md) for
-all options, MQTT identity requirements, HD probe behavior, and security notes.
+all options, discovery readiness topics, manual override behavior, HD probe
+behavior, and security notes.
