@@ -85,11 +85,12 @@ The backend keeps the last known IP after failure and retries with configured
 backoff.
 
 At `log_level: debug`, the completion line reports the resolver method, elapsed
-time, broadcast and unicast counts, received and rejected responses, send
-errors, and final error code. `deadline_exceeded` means the bounded lookup
+time, each LAN_SEARCH3/KNOCK2 send leg, KNOCK_RR2 receipts, UID/nonce
+rejections, broadcast and unicast counts, received and rejected responses,
+send errors, and final error code. `deadline_exceeded` means the bounded lookup
 finished normally without a match. `helper_timeout` means the child resolver
-failed to honor its deadline and the Python safety guard terminated it; this is
-an implementation failure rather than proof that the feeder is offline.
+failed to honor its deadline and the Python safety guard terminated it; this
+is an implementation failure rather than proof that the feeder is offline.
 
 ## Initial 640x360 stream before HD
 

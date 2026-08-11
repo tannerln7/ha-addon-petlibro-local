@@ -114,6 +114,10 @@ func TestDiscoveryProbeUsesCompleteFirmwareSequence(t *testing.T) {
 	if counters.unicasts.Load() != 1 {
 		t.Fatalf("expected one logical unicast probe, got %d", counters.unicasts.Load())
 	}
+	if counters.lanSearchW3_1Sent.Load() != 1 || counters.lanSearchW3_2Sent.Load() != 1 || counters.knock2Sent.Load() != 1 {
+		t.Fatalf("unexpected per-leg counters: w3_1=%d w3_2=%d knock2=%d",
+			counters.lanSearchW3_1Sent.Load(), counters.lanSearchW3_2Sent.Load(), counters.knock2Sent.Load())
+	}
 }
 
 func (f *fakeDiscoveryConn) ReadFromUDP(buf []byte) (int, *net.UDPAddr, error) {
@@ -139,6 +143,14 @@ func encryptedLANSearchResponse(uid string) []byte {
 	plain := make([]byte, 88)
 	binary.LittleEndian.PutUint16(plain[8:], msgLANSearchR)
 	copy(plain[0x10:0x24], uid)
+	return tutk.TransCodePartial(nil, plain)
+}
+
+func encryptedKnockResponse(uid string, nonce []byte) []byte {
+	plain := make([]byte, 52)
+	binary.LittleEndian.PutUint16(plain[8:], msgKnockRR2)
+	copy(plain[0x10:0x24], uid)
+	copy(plain[0x24:0x2C], nonce)
 	return tutk.TransCodePartial(nil, plain)
 }
 
@@ -254,12 +266,64 @@ func TestKnockResponseRequiresMatchingUIDAndNonce(t *testing.T) {
 	binary.LittleEndian.PutUint16(response[8:], msgKnockRR2)
 	copy(response[0x10:0x24], uid)
 	copy(response[0x24:0x2C], nonce)
-	if !validDiscoveryResponse(response, uid, nonce) {
+	if reason := classifyDiscoveryResponse(response, uid, nonce); reason != discoveryResponseAccepted {
 		t.Fatal("matching KNOCK_RR2 was rejected")
 	}
 	response[0x24] ^= 0xFF
-	if validDiscoveryResponse(response, uid, nonce) {
-		t.Fatal("KNOCK_RR2 with the wrong nonce was accepted")
+	if reason := classifyDiscoveryResponse(response, uid, nonce); reason != discoveryResponseNonceMismatch {
+		t.Fatalf("KNOCK_RR2 nonce mismatch reason=%d", reason)
+	}
+}
+
+func TestKnockResponseStats(t *testing.T) {
+	conn := newFakeDiscoveryConn()
+	options := testResolveOptions(250 * time.Millisecond)
+	nonce := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	plan := discoveryPlan{cached: []*net.UDPAddr{{IP: net.IPv4(192, 0, 2, 44), Port: lanPort}}}
+	var once sync.Once
+	conn.onWrite = func(_ *net.UDPAddr) {
+		once.Do(func() {
+			conn.reads <- fakeDiscoveryPacket{
+				data: encryptedKnockResponse(options.UID, nonce),
+				addr: &net.UDPAddr{IP: net.IPv4(192, 0, 2, 44), Port: lanPort},
+			}
+		})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), options.Timeout)
+	defer cancel()
+	result, err := resolveWithPlan(ctx, conn, options, nonce, plan, time.Now())
+	if err != nil || !result.Resolved {
+		t.Fatalf("unexpected result=%+v err=%v", result, err)
+	}
+	if result.Stats.KnockRR2Received != 1 || result.Stats.ResponsesRejected != 0 {
+		t.Fatalf("unexpected KNOCK_RR2 stats: %+v", result.Stats)
+	}
+}
+
+func TestKnockNonceMismatchStats(t *testing.T) {
+	conn := newFakeDiscoveryConn()
+	options := testResolveOptions(80 * time.Millisecond)
+	nonce := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	wrongNonce := append([]byte(nil), nonce...)
+	wrongNonce[0] ^= 0xFF
+	plan := discoveryPlan{cached: []*net.UDPAddr{{IP: net.IPv4(192, 0, 2, 44), Port: lanPort}}}
+	var once sync.Once
+	conn.onWrite = func(_ *net.UDPAddr) {
+		once.Do(func() {
+			conn.reads <- fakeDiscoveryPacket{
+				data: encryptedKnockResponse(options.UID, wrongNonce),
+				addr: &net.UDPAddr{IP: net.IPv4(192, 0, 2, 44), Port: lanPort},
+			}
+		})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), options.Timeout)
+	defer cancel()
+	result, err := resolveWithPlan(ctx, conn, options, nonce, plan, time.Now())
+	if err == nil || result.Resolved {
+		t.Fatalf("nonce mismatch unexpectedly resolved: %+v", result)
+	}
+	if result.Stats.KnockRR2Received != 1 || result.Stats.NonceMismatchRejected != 1 {
+		t.Fatalf("unexpected nonce mismatch stats: %+v", result.Stats)
 	}
 }
 
@@ -276,7 +340,7 @@ func TestWrongUIDResponseIsRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), options.Timeout)
 	defer cancel()
 	result, err := resolveWithPlan(ctx, conn, options, make([]byte, 8), plan, time.Now())
-	if err == nil || result.Resolved || result.Stats.ResponsesRejected == 0 {
+	if err == nil || result.Resolved || result.Stats.ResponsesRejected == 0 || result.Stats.WrongUIDRejected == 0 {
 		t.Fatalf("wrong UID was not rejected: result=%+v err=%v", result, err)
 	}
 }

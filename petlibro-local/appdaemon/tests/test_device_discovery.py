@@ -125,6 +125,13 @@ def test_registry_is_atomic_private_and_excludes_credentials():
 
 def test_resolver_helper_json_is_validated():
     stats = {
+        "lan_search_w3_1_sent": 1,
+        "lan_search_w3_2_sent": 1,
+        "knock2_sent": 1,
+        "lan_search_r_received": 0,
+        "knock_rr2_received": 1,
+        "wrong_uid_rejected": 0,
+        "nonce_mismatch_rejected": 0,
         "broadcasts_sent": 1,
         "unicasts_sent": 0,
         "packets_received": 1,
@@ -294,6 +301,13 @@ def test_resolution_completion_serializes_registry_update():
                     "method": "broadcast",
                     "elapsed_ms": 40,
                     "stats": {
+                        "lan_search_w3_1_sent": 1,
+                        "lan_search_w3_2_sent": 1,
+                        "knock2_sent": 1,
+                        "lan_search_r_received": 0,
+                        "knock_rr2_received": 1,
+                        "wrong_uid_rejected": 0,
+                        "nonce_mismatch_rejected": 0,
                         "broadcasts_sent": 1,
                         "unicasts_sent": 0,
                         "packets_received": 1,

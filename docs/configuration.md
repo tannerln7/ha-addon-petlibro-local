@@ -102,9 +102,15 @@ petlibro-resolve \
 
 It always emits one JSON result for a valid invocation. The result includes
 `resolved`, nullable `ip_address`, `method`, `elapsed_ms`, `error_code`, and
-`stats` containing broadcast/unicast sends, received/rejected packets, send
-errors, and deadline state. It exits nonzero when resolution fails. The
-coordinator invokes it without a shell and does not log the UID or raw result.
+`stats`. Per-leg fields are `lan_search_w3_1_sent`,
+`lan_search_w3_2_sent`, `knock2_sent`, `lan_search_r_received`, and
+`knock_rr2_received`. Rejection fields are `wrong_uid_rejected`,
+`nonce_mismatch_rejected`, and aggregate `responses_rejected`. The remaining
+aggregate fields are `broadcasts_sent`, `unicasts_sent`, `packets_received`,
+`send_errors`, and `deadline_exceeded`. The send-leg fields count successful
+UDP writes; broadcast/unicast fields count logical target exchanges. It exits
+nonzero when resolution fails. The coordinator invokes it without a shell and
+does not log the UID or raw result.
 
 ## Logging
 

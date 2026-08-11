@@ -39,12 +39,19 @@ type ResolveOptions struct {
 }
 
 type ResolveStats struct {
-	BroadcastsSent    uint64 `json:"broadcasts_sent"`
-	UnicastsSent      uint64 `json:"unicasts_sent"`
-	PacketsReceived   uint64 `json:"packets_received"`
-	ResponsesRejected uint64 `json:"responses_rejected"`
-	SendErrors        uint64 `json:"send_errors"`
-	DeadlineExceeded  bool   `json:"deadline_exceeded"`
+	LANSearchW3_1Sent     uint64 `json:"lan_search_w3_1_sent"`
+	LANSearchW3_2Sent     uint64 `json:"lan_search_w3_2_sent"`
+	Knock2Sent            uint64 `json:"knock2_sent"`
+	LANSearchRReceived    uint64 `json:"lan_search_r_received"`
+	KnockRR2Received      uint64 `json:"knock_rr2_received"`
+	WrongUIDRejected      uint64 `json:"wrong_uid_rejected"`
+	NonceMismatchRejected uint64 `json:"nonce_mismatch_rejected"`
+	BroadcastsSent        uint64 `json:"broadcasts_sent"`
+	UnicastsSent          uint64 `json:"unicasts_sent"`
+	PacketsReceived       uint64 `json:"packets_received"`
+	ResponsesRejected     uint64 `json:"responses_rejected"`
+	SendErrors            uint64 `json:"send_errors"`
+	DeadlineExceeded      bool   `json:"deadline_exceeded"`
 }
 
 type ResolveResult struct {
@@ -140,12 +147,29 @@ type discoveryPlan struct {
 }
 
 type resolveCounters struct {
-	broadcasts atomic.Uint64
-	unicasts   atomic.Uint64
-	received   atomic.Uint64
-	rejected   atomic.Uint64
-	sendErrors atomic.Uint64
+	lanSearchW3_1Sent     atomic.Uint64
+	lanSearchW3_2Sent     atomic.Uint64
+	knock2Sent            atomic.Uint64
+	lanSearchRReceived    atomic.Uint64
+	knockRR2Received      atomic.Uint64
+	wrongUIDRejected      atomic.Uint64
+	nonceMismatchRejected atomic.Uint64
+	broadcasts            atomic.Uint64
+	unicasts              atomic.Uint64
+	received              atomic.Uint64
+	rejected              atomic.Uint64
+	sendErrors            atomic.Uint64
 }
+
+type discoveryResponseReason uint8
+
+const (
+	discoveryResponseAccepted discoveryResponseReason = iota
+	discoveryResponseMalformed
+	discoveryResponseUnknown
+	discoveryResponseWrongUID
+	discoveryResponseNonceMismatch
+)
 
 type discoveredAddress struct {
 	addr *net.UDPAddr
@@ -367,15 +391,24 @@ func sendStage(ctx context.Context, conn udpDiscoveryConn, probe discoveryProbe,
 func sendDiscoveryProbe(ctx context.Context, conn udpDiscoveryConn, probe discoveryProbe, target *net.UDPAddr, broadcast bool, counters *resolveCounters) error {
 	sent := false
 	var lastErr error
-	for i, packet := range [][]byte{probe.search1, probe.search2, probe.knock2} {
+	packets := []struct {
+		wire []byte
+		sent *atomic.Uint64
+	}{
+		{wire: probe.search1, sent: &counters.lanSearchW3_1Sent},
+		{wire: probe.search2, sent: &counters.lanSearchW3_2Sent},
+		{wire: probe.knock2, sent: &counters.knock2Sent},
+	}
+	for i, packet := range packets {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if _, err := conn.WriteToUDP(packet, target); err != nil {
+		if _, err := conn.WriteToUDP(packet.wire, target); err != nil {
 			counters.sendErrors.Add(1)
 			lastErr = err
 		} else {
 			sent = true
+			packet.sent.Add(1)
 		}
 		// The direct camera handshake requires a short settle between the
 		// second LAN_SEARCH3 leg and KNOCK2. Keep it cancellable so one
@@ -417,8 +450,22 @@ func receiveDiscoveryResponses(ctx context.Context, conn udpDiscoveryConn, uid s
 		}
 		counters.received.Add(1)
 		pkt := tutk.ReverseTransCodePartial(nil, append([]byte(nil), buf[:n]...))
-		if !validDiscoveryResponse(pkt, uid, nonce) {
+		if len(pkt) >= 10 {
+			switch binary.LittleEndian.Uint16(pkt[8:]) {
+			case msgLANSearchR:
+				counters.lanSearchRReceived.Add(1)
+			case msgKnockRR2:
+				counters.knockRR2Received.Add(1)
+			}
+		}
+		if reason := classifyDiscoveryResponse(pkt, uid, nonce); reason != discoveryResponseAccepted {
 			counters.rejected.Add(1)
+			switch reason {
+			case discoveryResponseWrongUID:
+				counters.wrongUIDRejected.Add(1)
+			case discoveryResponseNonceMismatch:
+				counters.nonceMismatchRejected.Add(1)
+			}
 			continue
 		}
 		select {
@@ -429,26 +476,41 @@ func receiveDiscoveryResponses(ctx context.Context, conn udpDiscoveryConn, uid s
 	}
 }
 
-func validDiscoveryResponse(pkt []byte, uid string, nonce []byte) bool {
+func classifyDiscoveryResponse(pkt []byte, uid string, nonce []byte) discoveryResponseReason {
 	if len(pkt) < 12 {
-		return false
+		return discoveryResponseMalformed
 	}
 	switch binary.LittleEndian.Uint16(pkt[8:]) {
 	case msgLANSearchR:
 		// A discovery response is only useful when it identifies the UID.
 		// Do not accept anonymous broadcast replies from another camera.
 		if len(pkt) < 0x24 {
-			return false
+			return discoveryResponseMalformed
 		}
 		candidate := bytes.Trim(pkt[0x10:0x24], "\x00")
-		return len(candidate) == 20 && isASCIIAlphaNumeric(candidate) && string(candidate) == uid
+		if len(candidate) != 20 || !isASCIIAlphaNumeric(candidate) {
+			return discoveryResponseMalformed
+		}
+		if string(candidate) != uid {
+			return discoveryResponseWrongUID
+		}
+		return discoveryResponseAccepted
 	case msgKnockRR2:
 		// PLAF203 firmware may not answer LAN_SEARCH3 at all. It does answer
 		// the complete LAN_SEARCH3(w3=1,w3=2) + KNOCK2 exchange, echoing both
 		// the requested UID and nonce in KNOCK_RR2.
-		return len(pkt) >= 0x2C && string(pkt[0x10:0x24]) == uid && bytes.Equal(pkt[0x24:0x2C], nonce)
+		if len(pkt) < 0x2C {
+			return discoveryResponseMalformed
+		}
+		if string(pkt[0x10:0x24]) != uid {
+			return discoveryResponseWrongUID
+		}
+		if !bytes.Equal(pkt[0x24:0x2C], nonce) {
+			return discoveryResponseNonceMismatch
+		}
+		return discoveryResponseAccepted
 	default:
-		return false
+		return discoveryResponseUnknown
 	}
 }
 
@@ -463,7 +525,11 @@ func isASCIIAlphaNumeric(value []byte) bool {
 
 func (c *resolveCounters) snapshot(deadlineExceeded bool) ResolveStats {
 	return ResolveStats{
-		BroadcastsSent: c.broadcasts.Load(), UnicastsSent: c.unicasts.Load(),
+		LANSearchW3_1Sent: c.lanSearchW3_1Sent.Load(), LANSearchW3_2Sent: c.lanSearchW3_2Sent.Load(),
+		Knock2Sent: c.knock2Sent.Load(), LANSearchRReceived: c.lanSearchRReceived.Load(),
+		KnockRR2Received: c.knockRR2Received.Load(), WrongUIDRejected: c.wrongUIDRejected.Load(),
+		NonceMismatchRejected: c.nonceMismatchRejected.Load(),
+		BroadcastsSent:        c.broadcasts.Load(), UnicastsSent: c.unicasts.Load(),
 		PacketsReceived: c.received.Load(), ResponsesRejected: c.rejected.Load(),
 		SendErrors: c.sendErrors.Load(), DeadlineExceeded: deadlineExceeded,
 	}

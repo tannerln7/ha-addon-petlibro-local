@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.3
+
+- Pull a prebuilt amd64 add-on image from GHCR for normal Home Assistant
+  installs, while retaining an explicitly documented local-development build
+  path.
+- Fix automatic IP resolution with a bounded cached, broadcast, candidate, and
+  single-sweep strategy using the feeder's complete LAN_SEARCH3/KNOCK2 probe
+  sequence.
+- Run resolver subprocesses through AppDaemon's executor so MQTT callbacks stay
+  responsive, with structured timeout and helper-error handling.
+- Add conventional `log_level` controls, secret redaction, and trace-only raw
+  MQTT and per-packet diagnostics while preserving `verbose_logs` migration.
+- Report per-leg discovery sends, LAN_SEARCH_R/KNOCK_RR2 receipts, UID and nonce
+  rejections, aggregate traffic, send errors, and deadline state in resolver
+  JSON and debug logs.
+
 ## 0.2.2
 
 - Fix the first-heartbeat timestamp-drift error path so a controller callback
