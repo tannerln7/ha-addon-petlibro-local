@@ -104,6 +104,12 @@ runs every day at 19:00, disables feeding audio, and dispenses three portions:
 
 Use a distinct `id` for each configured plan.
 
+On startup, the controller synchronizes a feeding plan only when its persistent
+state contains at least one configured plan. A newly initialized empty state is
+not sent to the feeder, so first contact cannot clear an existing device
+schedule. An explicit schedule update remains authoritative; explicitly setting
+an empty collection clears the feeder schedule.
+
 ## Network notes
 
 Observed US firmware attempts plaintext MQTT on port `1883` using these hostnames:

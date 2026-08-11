@@ -3262,7 +3262,9 @@ class Backend:
         # for syncing the current food plans
         self.food_plans = food_plans
 
-        self._device_food_plans_sync(self.food_plans)
+        # This method represents an explicit schedule update. Unlike automatic
+        # reconnect synchronization, an empty list here is an intentional clear.
+        self._device_food_plans_sync(self.food_plans, allow_empty = True)
 
     def food_manual_feed_now(self, grain_num: int):
         manual_feeding_service_out = ManualFeedingServiceOut.create(grain_num = grain_num)
@@ -3313,8 +3315,10 @@ class Backend:
             attr_get_service_out = AttrGetServiceOut.create()
             self.client.attr_get_service_send(attr_get_service_out)
 
-            # Re-sync food plans
-            self._device_food_plans_sync(self.food_plans)
+            # Re-sync only plans that were actually configured. Fresh storage is
+            # initialized with an empty list, which must not erase the feeder's
+            # schedule merely because the backend connected for the first time.
+            self._device_food_plans_sync(self.food_plans, allow_empty = False)
 
             self.is_online = True
 
@@ -3332,7 +3336,7 @@ class Backend:
             timestamp_now = Timestamp.now()
 
             if not self._device_timestamp_sync_drift_check(timestamp_now, heartbeat_in.timestamp):
-                self.ad.error("Device NTP sync not successful, timestamp local {} <-> timestamp device {}".format(timestamp_now, ntp_sync_in.timestamp))
+                self.ad.error("Device NTP sync not successful, timestamp local {} <-> timestamp device {}".format(timestamp_now, heartbeat_in.timestamp))
 
                 if not self.ntp_sync_status_callback == None:
                     self.ntp_sync_status_callback(False)
@@ -3806,7 +3810,11 @@ class Backend:
 
         return delta < datetime.timedelta(seconds = self.NTP_SYNC_TIME_DIFF_THRESHOLD_SEC)
 
-    def _device_food_plans_sync(self, food_plans: FoodPlans):
+    def _device_food_plans_sync(self, food_plans: FoodPlans, *, allow_empty: bool):
+        if not food_plans.plans and not allow_empty:
+            self.ad.log("Skipping automatic feeding-plan sync because no plans are configured")
+            return
+
         feeding_plans_out: [FeedingPlanOut] = []
 
         sync_time_now = Timestamp.now()

@@ -4,6 +4,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 
@@ -142,6 +143,94 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertEqual(boot.message_id.data, calls[0][1]['msgId'])
         self.assertEqual([{'host': 'local-broker', 'port': 1883}], calls[1][1]['mqttAddr'])
         self.assertEqual('local-api', calls[1][1]['httpsAddr'])
+
+    def _heartbeat_backend(self, food_plans):
+        calls = []
+        client = types.SimpleNamespace(
+            get_config_send=lambda message: calls.append(
+                ('get_config', message.to_mqtt_payload())
+            ),
+            attr_get_service_send=lambda message: calls.append(
+                ('attr_get', message.to_mqtt_payload())
+            ),
+            feeding_plan_service_send=lambda message: calls.append(
+                ('feeding_plan', message.to_mqtt_payload())
+            ),
+        )
+        backend = p.Backend()
+        backend.ad = self.ad
+        backend.client = client
+        backend.device_serial = 'SERIAL'
+        backend.food_plans = food_plans
+        backend.last_heartbeat_count = 0
+        backend.is_online = False
+        backend.went_online_callback = None
+        backend.went_offline_callback = None
+        backend.ntp_sync_status_callback = None
+        backend.device_info_callback = None
+        backend.device_wifi_info_callback = None
+        backend.heartbeat_watchdog = types.SimpleNamespace(
+            reset=lambda: calls.append(('watchdog_reset', None))
+        )
+        return backend, calls
+
+    def test_heartbeat_drift_reports_heartbeat_timestamp_and_continues(self):
+        backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())
+        statuses = []
+        backend.ntp_sync_status_callback = statuses.append
+        heartbeat_timestamp = p.Timestamp(
+            datetime.datetime(2020, 1, 2, tzinfo=datetime.timezone.utc)
+        )
+        heartbeat = p.HeartbeatIn(
+            heartbeat_timestamp, 1, -50, p.WifiType.TYPE_0
+        )
+        now = p.Timestamp(datetime.datetime(2026, 8, 11, tzinfo=datetime.timezone.utc))
+
+        with patch.object(p.Timestamp, 'now', return_value=now):
+            backend._heartbeat_cb(heartbeat)
+
+        self.assertEqual([False], statuses)
+        self.assertEqual(1, len(self.ad.errors))
+        self.assertIn(str(heartbeat_timestamp), self.ad.errors[0])
+        self.assertTrue(backend.is_online)
+        self.assertIn(('watchdog_reset', None), calls)
+
+    def test_first_heartbeat_does_not_push_unconfigured_empty_plan(self):
+        backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())
+        heartbeat = p.HeartbeatIn(p.Timestamp.now(), 1, -50, p.WifiType.TYPE_0)
+
+        backend._heartbeat_cb(heartbeat)
+
+        self.assertNotIn('feeding_plan', [name for name, _payload in calls])
+        self.assertIn(
+            'Skipping automatic feeding-plan sync because no plans are configured',
+            self.ad.logs,
+        )
+
+    def test_explicit_plan_update_sends_non_empty_plan(self):
+        backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())
+        plan = p.FoodPlan(
+            1,
+            p.HourMinTimestamp(datetime.time(19, 0)),
+            p.WeekdaySchedule.create(p.Weekday.MONDAY),
+            False,
+            1,
+            3,
+        )
+
+        backend.food_plans_set(p.FoodPlans.create(plan))
+
+        feeding_calls = [payload for name, payload in calls if name == 'feeding_plan']
+        self.assertEqual(1, len(feeding_calls))
+        self.assertEqual(1, feeding_calls[0]['plans'][0]['planId'])
+
+    def test_explicit_empty_plan_update_can_clear_schedule(self):
+        backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())
+
+        backend.food_plans_set(p.FoodPlans.create_empty())
+
+        feeding_calls = [payload for name, payload in calls if name == 'feeding_plan']
+        self.assertEqual([[]], [payload['plans'] for payload in feeding_calls])
 
     def test_device_config_response_parser_and_service_post_dispatch(self):
         request = DEVICE_CONFIG_REQUEST['payload']
