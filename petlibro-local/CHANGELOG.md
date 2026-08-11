@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.7
+
+- Persist and republish accepted feeding-plan edits so all nine Home Assistant
+  text entities retain their updated values after a page refresh.
+- Bind every feeding-plan command topic to its corresponding slot and reject a
+  JSON `id` that does not match the edited slot.
+- Add concise success and mismatch diagnostics without logging feeding-plan
+  contents.
+- Replace opaque Home Assistant entity names and enum choices with readable
+  labels while preserving entity IDs, MQTT topics, and raw protocol values.
+
 ## 0.2.6
 
 - Apply sparse `ATTR_PUSH_EVENT` updates only to the settings groups actually
