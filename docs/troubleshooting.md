@@ -106,6 +106,20 @@ beyond the configurable 60000 ms probe limit. Keep `camera_quality: hd` and use
 the recommended `hd_probe_wait_ms: 15000`; the runtime metadata reports both
 the first and latest SPS even when go2rtc initially advertises 640x360.
 
+## Feeder resolution returns to P720 when viewing stops
+
+The Home Assistant **Feeder-reported camera resolution** select mirrors the
+device attribute, which can change to P1080 for an active HD TUTK session and
+return to P720 after the viewer disconnects. This does not mean a feeding plan
+or unrelated setting changed the requested go2rtc quality. Use
+`actual_resolution` from the camera runtime metadata to determine the SPS
+resolution of an active stream.
+
+Sparse device attribute events are applied field by field. A resolution-only
+event must not change food, audio, recording, detection, or other state. At
+debug level, `feeder-reported camera settings updated` indicates an inbound
+device report; it is not evidence that the backend sent a resolution command.
+
 ## Corruption, choppy playback, or media stalls
 
 Start with the validated settings:

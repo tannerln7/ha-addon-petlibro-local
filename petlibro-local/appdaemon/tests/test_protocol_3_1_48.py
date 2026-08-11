@@ -105,6 +105,38 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             first._ha_config_topic_base_path_get('sensor', 'device_uuid'),
         )
 
+    def test_resolution_discovery_identifies_feeder_reported_state(self):
+        discovery = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL')
+        discovery.discovery_issue()
+
+        config = next(
+            payload for topic, payload in self.mqtt.published
+            if topic.endswith('/camera_resolution/config')
+        )
+        self.assertEqual('Feeder-reported camera resolution', config['name'])
+
+    def test_bowl_mode_discovery_exposes_writable_device_configuration(self):
+        discovery = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL')
+        discovery.discovery_issue()
+
+        config = next(
+            payload for topic, payload in self.mqtt.published
+            if topic.endswith('/food_bowl_mode/config')
+        )
+        self.assertEqual('Bowl configuration', config['name'])
+        self.assertEqual(
+            ['SINGLE_BOWL', 'DOUBLE_BOWL'],
+            config['options'],
+        )
+        self.assertEqual(
+            'plaf203/SERIAL/food/cmd/bowl_mode',
+            config['command_topic'],
+        )
+        self.assertEqual(
+            'plaf203/SERIAL/food/bowl_mode',
+            config['state_topic'],
+        )
+
     def test_ntp_and_ntp_sync_include_capture_dst_schema(self):
         response = NTP_RESPONSE['payload']
         sync_request = NTP_SYNC_REQUEST['payload']
@@ -382,6 +414,172 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.client._mqtt_recv_service_cb('', {'payload': json.dumps(response)}, {})
         self.assertEqual(response['msgId'], received[0].message_id.data)
 
+    def test_sparse_resolution_push_dispatches_only_camera_state(self):
+        calls = []
+        backend = p.Backend()
+        for callback_name in (
+            'settings_audio_callback',
+            'settings_camera_callback',
+            'settings_recording_callback',
+            'settings_motion_detection_callback',
+            'settings_sound_detection_callback',
+            'settings_cloud_video_recording_callback',
+            'settings_sound_callback',
+            'settings_button_lights_callback',
+            'state_power_callback',
+            'state_food_callback',
+            'device_sd_card_info_callback',
+            'settings_feeding_video_callback',
+            'settings_buttons_auto_lock_callback',
+            'settings_bowl_mode_callback',
+        ):
+            setattr(
+                backend,
+                callback_name,
+                lambda _name=callback_name, **kwargs: calls.append((_name, kwargs)),
+            )
+        acknowledgements = []
+        backend.client = types.SimpleNamespace(
+            attr_push_event_send=acknowledgements.append
+        )
+        backend._device_timestamp_sync_drift_check_and_adjust = lambda timestamp: None
+
+        sparse = p.AttrPushEventIn.from_mqtt_payload({
+            'msgId': 'resolution-only',
+            'ts': p.Timestamp.now().to_timestamp_epoch_ms(),
+            'resolution': 'P720',
+        })
+        backend._attr_push_event_cb(sparse)
+
+        self.assertEqual(1, len(calls))
+        self.assertEqual('settings_camera_callback', calls[0][0])
+        self.assertEqual(p.Resolution.P720, calls[0][1]['resolution'])
+        self.assertEqual(1, len(acknowledgements))
+
+    def test_sparse_food_push_preserves_absent_boolean_fields(self):
+        food_states = []
+        backend = p.Backend()
+        for callback_name in (
+            'settings_audio_callback',
+            'settings_camera_callback',
+            'settings_recording_callback',
+            'settings_motion_detection_callback',
+            'settings_sound_detection_callback',
+            'settings_cloud_video_recording_callback',
+            'settings_sound_callback',
+            'settings_button_lights_callback',
+            'state_power_callback',
+            'device_sd_card_info_callback',
+            'settings_feeding_video_callback',
+            'settings_buttons_auto_lock_callback',
+            'settings_bowl_mode_callback',
+        ):
+            setattr(backend, callback_name, None)
+        backend.state_food_callback = lambda **kwargs: food_states.append(kwargs)
+        backend.client = types.SimpleNamespace(attr_push_event_send=lambda message: None)
+        backend._device_timestamp_sync_drift_check_and_adjust = lambda timestamp: None
+
+        sparse = p.AttrPushEventIn.from_mqtt_payload({
+            'msgId': 'motor-only',
+            'ts': p.Timestamp.now().to_timestamp_epoch_ms(),
+            'motorState': 2,
+        })
+        backend._attr_push_event_cb(sparse)
+
+        self.assertEqual([{
+            'motor_state': 2,
+            'outlet_blocked': None,
+            'low_fill_level': None,
+        }], food_states)
+
+    def test_sparse_bowl_mode_push_dispatches_only_bowl_configuration(self):
+        bowl_modes = []
+        backend = p.Backend()
+        for callback_name in (
+            'settings_audio_callback',
+            'settings_camera_callback',
+            'settings_recording_callback',
+            'settings_motion_detection_callback',
+            'settings_sound_detection_callback',
+            'settings_cloud_video_recording_callback',
+            'settings_sound_callback',
+            'settings_button_lights_callback',
+            'state_power_callback',
+            'state_food_callback',
+            'device_sd_card_info_callback',
+            'settings_feeding_video_callback',
+            'settings_buttons_auto_lock_callback',
+        ):
+            setattr(backend, callback_name, None)
+        backend.settings_bowl_mode_callback = (
+            lambda **kwargs: bowl_modes.append(kwargs)
+        )
+        backend.client = types.SimpleNamespace(attr_push_event_send=lambda message: None)
+        backend._device_timestamp_sync_drift_check_and_adjust = lambda timestamp: None
+
+        sparse = p.AttrPushEventIn.from_mqtt_payload({
+            'msgId': 'bowl-only',
+            'ts': p.Timestamp.now().to_timestamp_epoch_ms(),
+            'bowlMode': 'SINGLE_BOWL',
+        })
+        backend._attr_push_event_cb(sparse)
+
+        self.assertEqual([{'mode': p.BowlMode.SINGLE_BOWL}], bowl_modes)
+
+    def test_bowl_mode_command_serializes_attr_set_without_food_quantity(self):
+        sent = []
+        backend = p.Backend()
+        backend.client = types.SimpleNamespace(attr_set_service_send=sent.append)
+
+        backend.settings_bowl_mode(p.BowlMode.DOUBLE_BOWL)
+
+        payload = sent[0].to_mqtt_payload()
+        self.assertEqual('DOUBLE_BOWL', payload['bowlMode'])
+        self.assertNotIn('grainNum', payload)
+
+    def test_bowl_mode_mqtt_command_reaches_backend(self):
+        selected = []
+        controller = types.SimpleNamespace(
+            backend=types.SimpleNamespace(
+                settings_bowl_mode=lambda **kwargs: selected.append(kwargs)
+            )
+        )
+
+        p.Plaf203._mqtt_cmd_food_bowl_mode_cb(
+            controller,
+            '',
+            {'payload': 'DOUBLE_BOWL'},
+            {},
+        )
+
+        self.assertEqual([{'mode': p.BowlMode.DOUBLE_BOWL}], selected)
+
+    def test_dual_bowl_wire_alias_normalizes_to_double_bowl(self):
+        parsed = p.AttrPushEventIn.from_mqtt_payload({
+            'msgId': 'bowl-alias',
+            'ts': p.Timestamp.now().to_timestamp_epoch_ms(),
+            'bowlMode': 'DUAL_BOWL',
+        })
+
+        self.assertEqual(p.BowlMode.DOUBLE_BOWL, parsed.bowl_mode)
+
+    def test_invalid_feeding_plan_json_logs_position_without_payload(self):
+        controller = types.SimpleNamespace(
+            logger=p.PetlibroLogger(self.ad, "petlibro.controller", "debug"),
+        )
+        invalid = '{"minute":01}'
+
+        p.Plaf203._mqtt_cmd_food_plans(
+            controller, '', {'payload': invalid}, {}
+        )
+
+        message = self.ad.logs[-1]
+        self.assertIn('invalid feeding-plan JSON ignored', message)
+        self.assertIn('line=1', message)
+        self.assertIn('column=12', message)
+        self.assertIn('payload_length=13', message)
+        self.assertNotIn(invalid, message)
+
     def test_device_config_acknowledgement_requires_matching_pending_request(self):
         backend = p.Backend()
         backend.logger = p.PetlibroLogger(self.ad, "petlibro.backend", "debug")
@@ -457,7 +655,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertTrue(parsed.enable_light)
 
         storage = p.AttrPushEventIn.from_mqtt_payload(ATTR_PUSH_STORAGE_REQUEST['payload'])
-        self.assertEqual('SINGLE_BOWL', storage.bowl_mode)
+        self.assertEqual(p.BowlMode.SINGLE_BOWL, storage.bowl_mode)
         self.assertEqual(p.SdCardFileSystem.UNKNOWN, storage.sd_card_file_system)
 
         self.client.attr_push_event_send(p.AttrPushEventOut.create(
@@ -465,9 +663,13 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertTrue(self.mqtt.published[0][0].endswith(topic_suffix(ATTR_PUSH_RESPONSE)))
 
         set_payload = p.AttrSetServiceOut.create(
-            enable_audio=True, light_aging_type=p.AgingType.NON_SCHEDULED_ENABLED).to_mqtt_payload()
+            enable_audio=True,
+            light_aging_type=p.AgingType.NON_SCHEDULED_ENABLED,
+            bowl_mode=p.BowlMode.SINGLE_BOWL,
+        ).to_mqtt_payload()
         self.assertIs(set_payload['enableAudio'], True)
         self.assertEqual(1, set_payload['lightAgingType'])
+        self.assertEqual('SINGLE_BOWL', set_payload['bowlMode'])
         json.dumps(set_payload)
 
     def test_device_log_is_parsed_and_ignored_without_ack(self):

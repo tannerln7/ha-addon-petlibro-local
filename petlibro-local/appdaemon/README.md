@@ -130,6 +130,10 @@ runs every day at 19:00, disables feeding audio, and dispenses three portions:
 ```
 
 Use a distinct `id` for each configured plan.
+JSON numbers must not contain leading zeroes: use `{"hour":7,"minute":1}`
+for 07:01 and `{"hour":7,"minute":0}` for 07:00. Invalid JSON is rejected
+without changing the stored or device schedule; the warning reports the error
+location and payload length without logging the schedule itself.
 
 On startup, the controller synchronizes a feeding plan only when its persistent
 state contains at least one configured plan. A newly initialized empty state is
@@ -138,6 +142,30 @@ schedule. An explicit schedule update remains authoritative; explicitly setting
 an empty collection clears the feeder schedule. AppDaemon stores this state in
 the persistent `plaf203` namespace, so configured plans and the manual-feed
 portion default survive add-on restarts.
+
+## Bowl configuration and portions
+
+Home Assistant exposes **Bowl configuration** as a non-optimistic select with
+`SINGLE_BOWL` and `DOUBLE_BOWL` options. Changing it sends only the feeder's
+`bowlMode` attribute; the displayed state changes when the feeder reports the
+new value. The observed firmware reports `SINGLE_BOWL`. `DOUBLE_BOWL` is the
+inferred matching wire value and should be confirmed on a dual-tray feeder.
+
+The controller does not multiply or divide `grain_num`. A scheduled or manual
+feed quantity remains the total amount requested from the feeder. PETLIBRO's
+[PLAF203 serving guidance](https://designlibro.zendesk.com/hc/en-us/articles/44154385755545-Pre-sale-inquiries-about-the-Granary-Camera-feeder-AF203-PLAF203)
+says the dual-bowl attachment divides that output between the two bowls; the
+configured quantity is not an amount per bowl.
+
+## Camera resolution state
+
+The Home Assistant **Feeder-reported camera resolution** select reflects the
+PLAF203 `resolution` attribute. The feeder may report P1080 while an HD TUTK
+session is active and return to P720 when that session ends. This is separate
+from the add-on's requested `camera_quality` and the SPS-derived
+`actual_resolution` in camera runtime metadata. Sparse device events update
+only the fields present in the event; unrelated state is not synthesized or
+republished.
 
 ## Network notes
 

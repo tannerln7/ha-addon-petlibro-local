@@ -417,6 +417,20 @@ class Resolution(enum.Enum):
     P720 = 0
     P1080 = 1
 
+class BowlMode(enum.Enum):
+    SINGLE_BOWL = 'SINGLE_BOWL'
+    DOUBLE_BOWL = 'DOUBLE_BOWL'
+
+    @staticmethod
+    def from_mqtt_payload_value(value: str) -> BowlMode:
+        # Some Petlibro surfaces describe this configuration as "dual bowl",
+        # while the protocol naming pairs SINGLE_BOWL with DOUBLE_BOWL.
+        # Accept DUAL_BOWL if a firmware variant reports it, but always send
+        # the canonical DOUBLE_BOWL value used by this integration.
+        if value == 'DUAL_BOWL':
+            return BowlMode.DOUBLE_BOWL
+        return BowlMode(value)
+
 class VideoRecordMode(enum.Enum):
     CONTINUOUS = 0
     MOTION_DETECTION = 1
@@ -950,7 +964,7 @@ class AttrPushEventIn:
     # auto lock buttons?
     auto_change_mode: Optional[bool] = None
     auto_threshold: Optional[int] = None
-    bowl_mode: Optional[str] = None
+    bowl_mode: Optional[BowlMode] = None
 
     # Camera
     camera_switch: Optional[bool] = None
@@ -1071,7 +1085,7 @@ class AttrPushEventIn:
         if 'autoThreshold' in payload:
             data = data | { 'auto_threshold': payload['autoThreshold'] }
         if 'bowlMode' in payload:
-            data = data | { 'bowl_mode': payload['bowlMode'] }
+            data = data | { 'bowl_mode': BowlMode.from_mqtt_payload_value(payload['bowlMode']) }
 
         if 'cameraSwitch' in payload:
             data = data | { 'camera_switch': payload['cameraSwitch'] }
@@ -1274,6 +1288,9 @@ class AttrSetServiceOut:
     auto_change_mode: Optional[bool] = None
     auto_threshold: Optional[int] = None
 
+    # Physical food-tray configuration
+    bowl_mode: Optional[BowlMode] = None
+
     @staticmethod
     def create(**kwargs) -> AttrSetServiceOut:
         return AttrSetServiceOut(
@@ -1402,6 +1419,9 @@ class AttrSetServiceOut:
             payload = payload | { 'autoChangeMode': self.auto_change_mode }
         if not self.auto_threshold == None:
             payload = payload | { 'autoThreshold': self.auto_threshold }
+
+        if not self.bowl_mode == None:
+            payload = payload | { 'bowlMode': self.bowl_mode.value }
 
         return payload
 
@@ -1867,6 +1887,9 @@ class AttrGetServiceIn:
     sound_detection_start_time_utc: Optional[HourMinTimestamp] = None
     sound_detection_end_time_utc: Optional[HourMinTimestamp] = None
 
+    # Physical food-tray configuration
+    bowl_mode: Optional[BowlMode] = None
+
     @staticmethod
     def from_mqtt_payload(payload: dict) -> AttrGetServiceIn:
         data = {
@@ -1972,6 +1995,9 @@ class AttrGetServiceIn:
             data = data | { 'sound_detection_start_time_utc': HourMinTimestamp.from_mqtt_payload_value(payload['soundDetectionStartTimeUtc']) }
         if 'soundDetectionEndTimeUtc' in payload:
             data = data | { 'sound_detection_end_time_utc': HourMinTimestamp.from_mqtt_payload_value(payload['soundDetectionEndTimeUtc']) }
+
+        if 'bowlMode' in payload:
+            data = data | { 'bowl_mode': BowlMode.from_mqtt_payload_value(payload['bowlMode']) }
 
         return AttrGetServiceIn(**data)
 
@@ -3119,6 +3145,7 @@ class Backend:
         self.settings_button_lights_callback = None
         self.settings_feeding_video_callback = None
         self.settings_buttons_auto_lock_callback = None
+        self.settings_bowl_mode_callback = None
 
         self.state_power_callback = None
         self.state_food_callback = None
@@ -3195,6 +3222,9 @@ class Backend:
 
     def settings_buttons_auto_lock_listen(self, callback):
         self.settings_buttons_auto_lock_callback = callback
+
+    def settings_bowl_mode_listen(self, callback):
+        self.settings_bowl_mode_callback = callback
 
     def state_power_listen(self, callback):
         self.state_power_callback = callback
@@ -3286,6 +3316,10 @@ class Backend:
             auto_change_mode = enable,
             auto_threshold = threshold,
         )
+        self.client.attr_set_service_send(attr_set_service_out)
+
+    def settings_bowl_mode(self, mode: BowlMode):
+        attr_set_service_out = AttrSetServiceOut.create(bowl_mode = mode)
         self.client.attr_set_service_send(attr_set_service_out)
 
     def settings_feeding_video(self, enable: bool = None, video_on_start_feeding_plan: bool = None, video_after_manual_feeding: bool = None, recording_length_before_feeding_plan_time: int = None, recording_length_after_manual_feeding_time: int = None, video_watermark: bool = None, automatic_recording: int = None):
@@ -3613,9 +3647,21 @@ class Backend:
         if not self.state_food_callback == None:
             self.state_food_callback(
                 motor_state = attr_get_service_in.motor_state,
-                outlet_blocked = not attr_get_service_in.grain_outlet_state,
-                low_fill_level = not attr_get_service_in.surplus_grain,
+                outlet_blocked = (
+                    None if attr_get_service_in.grain_outlet_state is None
+                    else not attr_get_service_in.grain_outlet_state
+                ),
+                low_fill_level = (
+                    None if attr_get_service_in.surplus_grain is None
+                    else not attr_get_service_in.surplus_grain
+                ),
             )
+
+        if (
+            self.settings_bowl_mode_callback is not None
+            and attr_get_service_in.bowl_mode is not None
+        ):
+            self.settings_bowl_mode_callback(mode = attr_get_service_in.bowl_mode)
 
         if not self.device_wifi_info_callback == None:
             self.device_wifi_info_callback(ssid = attr_get_service_in.wifi_ssid)
@@ -3648,7 +3694,13 @@ class Backend:
         self._device_timestamp_sync_drift_check_and_adjust(attr_get_service_in.timestamp)
 
     def _attr_push_event_cb(self, attr_push_event_in: AttrPushEventIn):
-        if not self.settings_audio_callback == None:
+        if (
+            self.settings_audio_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.enable_audio,
+                attr_push_event_in.audio_url,
+            ))
+        ):
             self.settings_audio_callback(
                 enable = attr_push_event_in.enable_audio,
                 url = attr_push_event_in.audio_url,
@@ -3660,7 +3712,16 @@ class Backend:
         if not attr_push_event_in.audio_url == None:
             self.settings_audio_file_url = attr_push_event_in.audio_url
 
-        if not self.settings_camera_callback == None:
+        if (
+            self.settings_camera_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.enable_camera,
+                attr_push_event_in.camera_switch,
+                attr_push_event_in.camera_aging_type,
+                attr_push_event_in.night_vision,
+                attr_push_event_in.resolution,
+            ))
+        ):
             self.settings_camera_callback(
                 feature_enabled = attr_push_event_in.enable_camera,
                 enable = attr_push_event_in.camera_switch,
@@ -3669,7 +3730,15 @@ class Backend:
                 resolution = attr_push_event_in.resolution,
             )
 
-        if not self.settings_recording_callback == None:
+        if (
+            self.settings_recording_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.enable_video_record,
+                attr_push_event_in.video_record_switch,
+                attr_push_event_in.video_record_aging_type,
+                attr_push_event_in.video_record_mode,
+            ))
+        ):
             self.settings_recording_callback(
                 feature_enabled = attr_push_event_in.enable_video_record,
                 enable = attr_push_event_in.video_record_switch,
@@ -3677,7 +3746,16 @@ class Backend:
                 mode = attr_push_event_in.video_record_mode,
             )
 
-        if not self.settings_motion_detection_callback == None:
+        if (
+            self.settings_motion_detection_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.enable_motion_detection,
+                attr_push_event_in.motion_detection_switch,
+                attr_push_event_in.motion_detection_aging_type,
+                attr_push_event_in.motion_detection_range,
+                attr_push_event_in.motion_detection_sensitivity,
+            ))
+        ):
             self.settings_motion_detection_callback(
                 feature_enabled = attr_push_event_in.enable_motion_detection,
                 enable = attr_push_event_in.motion_detection_switch,
@@ -3686,7 +3764,15 @@ class Backend:
                 sensitivity = attr_push_event_in.motion_detection_sensitivity,
             )
 
-        if not self.settings_sound_detection_callback == None:
+        if (
+            self.settings_sound_detection_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.enable_sound_detection,
+                attr_push_event_in.sound_detection_switch,
+                attr_push_event_in.sound_detection_aging_type,
+                attr_push_event_in.sound_detection_sensitivity,
+            ))
+        ):
             self.settings_sound_detection_callback(
                 feature_enabled = attr_push_event_in.enable_sound_detection,
                 enable = attr_push_event_in.sound_detection_switch,
@@ -3694,12 +3780,23 @@ class Backend:
                 sensitivity = attr_push_event_in.sound_detection_sensitivity,
             )
 
-        if not self.settings_cloud_video_recording_callback == None:
+        if (
+            self.settings_cloud_video_recording_callback is not None
+            and attr_push_event_in.cloud_video_record_switch is not None
+        ):
             self.settings_cloud_video_recording_callback(
                 enable = attr_push_event_in.cloud_video_record_switch,
             )
 
-        if not self.settings_sound_callback == None:
+        if (
+            self.settings_sound_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.enable_sound,
+                attr_push_event_in.sound_switch,
+                attr_push_event_in.sound_aging_type,
+                attr_push_event_in.volume,
+            ))
+        ):
             self.settings_sound_callback(
                 feature_enabled = attr_push_event_in.enable_sound,
                 enable = attr_push_event_in.sound_switch,
@@ -3707,27 +3804,69 @@ class Backend:
                 volume = attr_push_event_in.volume,
             )
 
-        if not self.settings_button_lights_callback == None:
+        if (
+            self.settings_button_lights_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.enable_light,
+                attr_push_event_in.light_switch,
+                attr_push_event_in.light_aging_type,
+            ))
+        ):
             self.settings_button_lights_callback(
+                feature_enabled = attr_push_event_in.enable_light,
                 enable = attr_push_event_in.light_switch,
                 aging_type = attr_push_event_in.light_aging_type,
             )
 
-        if not self.state_power_callback == None:
+        if (
+            self.state_power_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.electric_quantity,
+                attr_push_event_in.power_mode,
+                attr_push_event_in.power_type,
+            ))
+        ):
             self.state_power_callback(
                 battery_level = attr_push_event_in.electric_quantity,
                 mode = attr_push_event_in.power_mode,
                 type_ = attr_push_event_in.power_type,
             )
 
-        if not self.state_food_callback == None:
+        if (
+            self.state_food_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.motor_state,
+                attr_push_event_in.grain_outlet_state,
+                attr_push_event_in.surplus_grain,
+            ))
+        ):
             self.state_food_callback(
                 motor_state = attr_push_event_in.motor_state,
-                outlet_blocked = not attr_push_event_in.grain_outlet_state,
-                low_fill_level = not attr_push_event_in.surplus_grain,
+                outlet_blocked = (
+                    None if attr_push_event_in.grain_outlet_state is None
+                    else not attr_push_event_in.grain_outlet_state
+                ),
+                low_fill_level = (
+                    None if attr_push_event_in.surplus_grain is None
+                    else not attr_push_event_in.surplus_grain
+                ),
             )
 
-        if not self.device_sd_card_info_callback == None:
+        if (
+            self.settings_bowl_mode_callback is not None
+            and attr_push_event_in.bowl_mode is not None
+        ):
+            self.settings_bowl_mode_callback(mode = attr_push_event_in.bowl_mode)
+
+        if (
+            self.device_sd_card_info_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.sd_card_state,
+                attr_push_event_in.sd_card_file_system,
+                attr_push_event_in.sd_card_total_capacity,
+                attr_push_event_in.sd_card_used_capacity,
+            ))
+        ):
             self.device_sd_card_info_callback(
                 state = attr_push_event_in.sd_card_state,
                 file_system = attr_push_event_in.sd_card_file_system,
@@ -3735,7 +3874,18 @@ class Backend:
                 used_capacity_mb = attr_push_event_in.sd_card_used_capacity,
             )
 
-        if not self.settings_feeding_video_callback == None:
+        if (
+            self.settings_feeding_video_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.feeding_video_switch,
+                attr_push_event_in.enable_video_start_feeding_plan,
+                attr_push_event_in.enable_video_after_manual_feeding,
+                attr_push_event_in.before_feeding_plan_time,
+                attr_push_event_in.after_manual_feeding_time,
+                attr_push_event_in.video_watermark_switch,
+                attr_push_event_in.automatic_recording,
+            ))
+        ):
             self.settings_feeding_video_callback(
                 enable = attr_push_event_in.feeding_video_switch,
                 video_on_start_feeding_plan = attr_push_event_in.enable_video_start_feeding_plan,
@@ -3746,7 +3896,13 @@ class Backend:
                 automatic_recording = attr_push_event_in.automatic_recording,
             )
 
-        if not self.settings_buttons_auto_lock_callback == None:
+        if (
+            self.settings_buttons_auto_lock_callback is not None
+            and any(value is not None for value in (
+                attr_push_event_in.auto_change_mode,
+                attr_push_event_in.auto_threshold,
+            ))
+        ):
             self.settings_buttons_auto_lock_callback(
                 enable = attr_push_event_in.auto_change_mode,
                 threshold = attr_push_event_in.auto_threshold,
@@ -3988,7 +4144,7 @@ class HomeAssistantDiscoveryMqtt:
         self._ha_binary_sensor_config_publish('Camera feature enabled', 'mdi:cctv', 'camera', 'enable', 'diagnostic')
         self._ha_select_config_publish('Camera aging type', 'mdi:cctv', 'camera', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config')
         self._ha_select_config_publish('Camera night vision', 'mdi:cctv', 'camera', 'night_vision', [ NightVision.AUTOMATIC.name, NightVision.OPEN.name, NightVision.CLOSE.name ], 'config')
-        self._ha_select_config_publish('Camera resolution', 'mdi:cctv', 'camera', 'resolution', [ Resolution.P720.name, Resolution.P1080.name ], 'config')
+        self._ha_select_config_publish('Feeder-reported camera resolution', 'mdi:cctv', 'camera', 'resolution', [ Resolution.P720.name, Resolution.P1080.name ], 'config')
         # TODO support aging type 2 items
 
         self._ha_switch_config_publish('Recording enable', 'mdi:camera', 'recording', 'enable', 'config')
@@ -4064,6 +4220,14 @@ class HomeAssistantDiscoveryMqtt:
         self._ha_sensor_config_publish('Food motor state', 'mdi:food', 'food', 'motor_state', entity_category = 'diagnostic')
         self._ha_binary_sensor_config_publish('Food outlet blocked', 'mdi:food', 'food', 'outlet_blocked')
         self._ha_binary_sensor_config_publish('Food low fill level', 'mdi:food', 'food', 'low_fill_level')
+        self._ha_select_config_publish(
+            'Bowl configuration',
+            'mdi:bowl-mix',
+            'food',
+            'bowl_mode',
+            [ BowlMode.SINGLE_BOWL.name, BowlMode.DOUBLE_BOWL.name ],
+            'config',
+        )
 
         self._ha_text_config_publish('Food plan 1', 'mdi:food', 'food', 'plan_1', 'config')
         self._ha_text_config_publish('Food plan 2', 'mdi:food', 'food', 'plan_2', 'config')
@@ -4506,6 +4670,7 @@ class Plaf203(adbase.ADBase):
         self.backend.settings_button_lights_listen(self._settings_button_lights_cb)
         self.backend.settings_feeding_video_listen(self._settings_feeding_video_cb)
         self.backend.settings_buttons_auto_lock_listen(self._settings_buttons_auto_lock_cb)
+        self.backend.settings_bowl_mode_listen(self._settings_bowl_mode_cb)
 
         self.backend.state_power_listen(self._state_power_cb)
         self.backend.state_food_listen(self._state_food_cb)
@@ -4579,6 +4744,7 @@ class Plaf203(adbase.ADBase):
         self._mqtt_subscribe('food/cmd/plan_9', self._mqtt_cmd_food_plans)
         self._mqtt_subscribe('food/cmd/manual_feed', self._mqtt_cmd_manual_feed_cb)
         self._mqtt_subscribe('food/cmd/manual_feed_grain_num', self._mqtt_cmd_manual_feed_grain_num_cb)
+        self._mqtt_subscribe('food/cmd/bowl_mode', self._mqtt_cmd_food_bowl_mode_cb)
 
         self._mqtt_subscribe('device/cmd/reboot', self._mqtt_cmd_device_reboot)
         self._mqtt_subscribe('device/cmd/factory_reset', self._mqtt_cmd_device_factory_reset)
@@ -4685,7 +4851,7 @@ class Plaf203(adbase.ADBase):
 
     def _settings_camera_cb(self, feature_enabled: bool = None, enable: bool = None, aging_type: AgingType = None, night_vision: NightVision = None, resolution: Resolution = None):
         self.logger.debug(
-            "camera settings updated",
+            "feeder-reported camera settings updated",
             feature_enabled=feature_enabled,
             enabled=enable,
             aging_type=aging_type,
@@ -4707,6 +4873,12 @@ class Plaf203(adbase.ADBase):
 
         if not resolution == None:
             self._camera_resolution_set(resolution)
+
+    def _settings_bowl_mode_cb(self, mode: BowlMode = None):
+        self.logger.debug("bowl configuration updated", mode=mode)
+
+        if mode is not None:
+            self._food_bowl_mode_set(mode)
 
     def _settings_recording_cb(self, feature_enabled: bool = None, enable: bool = None, aging_type: AgingType = None, mode: VideoRecordMode = None):
         self.logger.debug(
@@ -5130,6 +5302,9 @@ class Plaf203(adbase.ADBase):
     def _food_low_fill_level_set(self, low_fill_level: bool):
         self._mqtt_publish_bool('food/low_fill_level', low_fill_level)
 
+    def _food_bowl_mode_set(self, mode: BowlMode):
+        self._mqtt_publish_str('food/bowl_mode', mode.name)
+
     def _food_manual_feed_grain_num_set(self, grain_num: int):
         self._mqtt_publish_int('food/manual_feed_grain_num', grain_num)
 
@@ -5274,6 +5449,19 @@ class Plaf203(adbase.ADBase):
         try:
             payload = json.loads(data['payload'])
             food_plan = FoodPlan.from_dict(payload)
+        except json.JSONDecodeError as error:
+            raw_payload = data.get('payload')
+            self.logger.warning(
+                "invalid feeding-plan JSON ignored",
+                reason=error.msg,
+                line=error.lineno,
+                column=error.colno,
+                position=error.pos,
+                payload_length=(
+                    len(raw_payload) if isinstance(raw_payload, str) else None
+                ),
+            )
+            return
         except Exception as error:
             self.logger.warning(
                 "invalid feeding-plan command ignored", error_type=type(error).__name__
@@ -5288,6 +5476,9 @@ class Plaf203(adbase.ADBase):
 
     def _mqtt_cmd_manual_feed_grain_num_cb(self, eventname: str, data: dict, kwargs):
         self.storage.food_manual_feed_grain_num_set(int(data['payload']))
+
+    def _mqtt_cmd_food_bowl_mode_cb(self, eventname: str, data: dict, kwargs):
+        self.backend.settings_bowl_mode(mode = BowlMode[data['payload']])
 
     def _mqtt_cmd_manual_feed_cb(self, eventname: str, data: dict, kwargs):
         self.backend.food_manual_feed_now(self.storage.food_manual_feed_grain_num_get())

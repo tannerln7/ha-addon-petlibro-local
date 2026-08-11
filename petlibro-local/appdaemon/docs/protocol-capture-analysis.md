@@ -640,7 +640,10 @@ in `src/plaf203.py` and covered by the sanitized fixtures in `tests/`:
   values by default and sends this command only after an explicit feeder MQTT
   persistence opt-in and destination validation.
 - `disableHardwareButton`, `enableLight`, `bowlMode`, and the firmware's
-  misspelled `"unkown type"` filesystem value are accepted.
+  misspelled `"unkown type"` filesystem value are accepted. The observed
+  `SINGLE_BOWL` value is exposed through Home Assistant. The writable
+  `DOUBLE_BOWL` counterpart is inferred from the protocol naming and remains
+  subject to live confirmation.
 - Attribute serializers use JSON booleans and omit optional plan fields when
   absent. Feeding-plan response timestamps are normalized to `Timestamp`.
 - `DEVICE_LOG_REPORT_EVENT` is parsed and summarized without an application
@@ -665,6 +668,11 @@ account data; it preserves only the message shapes needed by the tests.
   current MQTT or HTTPS values. Omitting `httpsAddr` in an intentional
   MQTT-only update remains a live-test question; the default path avoids this
   uncertainty by omitting the entire command.
+- The capture reports `bowlMode:"SINGLE_BOWL"`, but does not contain an
+  `ATTR_SET_SERVICE` bowl-mode change or a dual-bowl report. The implementation
+  sends the inferred counterpart `DOUBLE_BOWL` and accepts `DUAL_BOWL` as an
+  inbound compatibility alias; a live dual-tray test is still required to
+  confirm the canonical write value.
 - No OTA PUBLISH occurred. `OTA_INFORM`, `OTA_PROGRESS`, and `OTA_UPGRADE`
   schemas and response topics remain unconfirmed for 3.1.48; only the feeder's
   `ota/sub` subscription was observed.
