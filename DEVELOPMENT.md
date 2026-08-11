@@ -92,9 +92,25 @@ not depend on the internal file schema.
 
 `appdaemon/src/device_discovery.py` owns MQTT identity observation, persistent
 registry updates, resolver invocation, readiness publication, and idempotent
-runtime reconfiguration. `go2rtc/cmd/petlibro-resolve` is the small CLI boundary
-around the package's LAN_SEARCH3 implementation. Test coordinator policy as
-pure Python where practical and discovery wire behavior in Go.
+runtime reconfiguration. `go2rtc/cmd/petlibro-resolve` is the small CLI
+boundary around the package's LAN_SEARCH3/KNOCK2 implementation. Test
+coordinator policy as pure Python where practical and discovery wire behavior
+in Go.
+
+The resolver uses a cached/broadcast/candidate/single-sweep strategy under one
+socket deadline. Keep its receiver active while sends occur, preserve the
+configured rate limit, and never add an unbounded per-target operation.
+PLAF203 discovery requires both LAN_SEARCH3 legs and KNOCK2; accept KNOCK_RR2
+only when its UID and nonce match. The AppDaemon coordinator uses
+`submit_to_executor` for the blocking subprocess. The executor worker returns
+data only, while the completion callback serializes registry, MQTT readiness,
+and config changes.
+
+`appdaemon/src/petlibro_logging.py` owns application log filtering and secret
+redaction. Do not start AppDaemon with global `-D DEBUG`: that exposes its
+high-frequency scheduler and state internals. Add bounded state summaries at
+`debug` and raw message or packet evidence at `trace`. Decrypted dump files
+remain controlled exclusively by `enable_debug_dumps`.
 
 ## Updating imported components
 

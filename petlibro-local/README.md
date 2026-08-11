@@ -19,7 +19,11 @@ to force one, and expect high CPU use while it runs on a low-resource system.
 Configure the MQTT broker and feeder LAN subnet on the **Configuration** tab.
 Start the add-on, then reboot or power-cycle the feeder. The backend discovers
 the serial from MQTT, the camera UID from `DEVICE_START_EVENT`, and the current
-IP with LAN_SEARCH3. Open **Log** to follow discovery and stream setup.
+IP with the UID-specific LAN_SEARCH3/KNOCK2 exchange. Open **Log** to follow
+discovery and stream setup.
+Discovery checks cached and broadcast targets first and uses one paced subnet
+fallback only when necessary, so an unavailable feeder cannot hold an
+AppDaemon callback open.
 
 The go2rtc web interface and API are exposed on port `1984`:
 
@@ -34,5 +38,7 @@ rtsp://HOME_ASSISTANT_HOST:8554/petlibro_plaf203_<serial>
 ```
 
 Camera sessions start when a viewer opens a stream. See [DOCS.md](DOCS.md) for
-all options, discovery readiness topics, manual override behavior, HD probe
-behavior, and security notes.
+all options, discovery readiness topics, log levels, manual override behavior,
+HD probe behavior, and security notes. Keep `log_level: info` for normal use,
+select `debug` for bounded diagnostics, and reserve noisy `trace` for short
+captures.

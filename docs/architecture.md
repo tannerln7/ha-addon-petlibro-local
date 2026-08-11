@@ -51,8 +51,8 @@ publishes the stable camera runtime contract for frontend integrations.
 The coordinator subscribes to `dl/+/+/device/#`, filters supported PLAF203
 topics, derives the serial from the topic, and accepts a 20-character UID only
 from `DEVICE_START_EVENT.uuid`. It calls the companion `petlibro-resolve`
-binary, which reuses the Go Petlibro LAN_SEARCH3 implementation instead of
-duplicating it in Python.
+binary, which reuses the Go Petlibro LAN_SEARCH3/KNOCK2 implementation instead
+of duplicating it in Python.
 
 The mode-0600 `/data/devices.json` registry is the durable source for generated
 per-device AppDaemon entries and direct-IP go2rtc URLs. Writes are atomic and

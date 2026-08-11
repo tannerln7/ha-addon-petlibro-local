@@ -56,12 +56,14 @@ class RenderConfigTests(unittest.TestCase):
         source = data_dir / "plaf203.py"
         metadata = data_dir / "camera_metadata.py"
         discovery = data_dir / "device_discovery.py"
-        for path in (source, metadata, discovery):
+        logging_source = data_dir / "petlibro_logging.py"
+        for path in (source, metadata, discovery, logging_source):
             path.write_text("# synthetic app source\n", encoding="utf-8")
         environment = {
             "PETLIBRO_APP_SOURCE": str(source),
             "PETLIBRO_CAMERA_METADATA_SOURCE": str(metadata),
             "PETLIBRO_DEVICE_DISCOVERY_SOURCE": str(discovery),
+            "PETLIBRO_LOGGING_SOURCE": str(logging_source),
         }
         go2rtc_changed = render_config.render_go2rtc(options, data_dir, TEMPLATES)
         with patch.dict(os.environ, environment):
@@ -165,6 +167,38 @@ class RenderConfigTests(unittest.TestCase):
             self.assertTrue(loaded["device_discovery"])
             self.assertEqual([], loaded["devices"])
             self.assertEqual("10.20.0.0/16", loaded["lan_cidr"])
+
+    def test_log_level_validation_and_legacy_verbose_migration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            (data_dir / "options.json").write_text(
+                json.dumps({"verbose_logs": True}), encoding="utf-8"
+            )
+            loaded = render_config.load_options(data_dir)
+            self.assertEqual("debug", loaded["log_level"])
+
+        options = self.options()
+        options["log_level"] = "noisy"
+        with self.assertRaisesRegex(ValueError, "log_level"):
+            render_config.validate(options)
+
+    def test_debug_is_bounded_and_trace_enables_targeted_protocol_traces(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            options = self.options(devices=[self.manual_device()])
+            options["log_level"] = "debug"
+            render_config.validate(options)
+            self.render_all(options, data_dir)
+            go2rtc = (data_dir / "go2rtc.yaml").read_text(encoding="utf-8")
+            self.assertIn("verbose=1", go2rtc)
+            self.assertNotIn("trace_packets=1", go2rtc)
+            self.assertFalse((data_dir / ".verbose_logs").exists())
+
+            options["log_level"] = "trace"
+            self.render_all(options, data_dir)
+            go2rtc = (data_dir / "go2rtc.yaml").read_text(encoding="utf-8")
+            self.assertIn("trace_packets=1", go2rtc)
+            self.assertIn("trace_ack=1", go2rtc)
 
     def test_empty_registry_starts_discovery_without_a_camera_stream(self):
         with tempfile.TemporaryDirectory() as temporary:

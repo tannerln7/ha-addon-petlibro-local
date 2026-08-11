@@ -28,8 +28,10 @@ on Raspberry Pi-class and other low-resource installations.
 |---|---|---|
 | `device_discovery` | `true` | Observe supported feeder MQTT topics and configure discovered devices |
 | `product_filter` | `PLAF203` | Supported product family; currently fixed to PLAF203 |
-| `lan_cidr` | `192.168.1.0/24` | IPv4 network searched by LAN_SEARCH3; maximum size `/16` |
-| `ip_resolve_timeout_seconds` | `10` | Timeout for each UID-to-IP lookup |
+| `lan_cidr` | `192.168.1.0/24` | IPv4 network searched by the UID-specific LAN probe; maximum size `/16` |
+| `ip_resolve_timeout_seconds` | `15` | Timeout for each UID-to-IP lookup; covers one paced `/24` sweep at the default rate |
+| `ip_discovery_broadcast_seconds` | `2` | Time reserved for low-impact broadcast discovery before fallback |
+| `ip_discovery_max_unicast_per_second` | `32` | Maximum paced fallback probes per second |
 | `ip_refresh_interval_minutes` | `360` | Maximum age of a healthy cached address |
 | `ip_retry_backoff_seconds` | `60` | Minimum delay after a failed lookup |
 | `devices` | `[]` | Optional advanced manual overrides |
@@ -37,6 +39,12 @@ on Raspberry Pi-class and other low-resource installations.
 Normal setup does not require a serial, UID, or IP address. Start the backend,
 then reboot the feeder so the coordinator can observe `DEVICE_START_EVENT`.
 The generated stream appears after serial, UID, and LAN address discovery.
+The resolver checks the cached address first, starts its receiver before
+sending broadcast probes, tries other known Petlibro addresses, and scans the
+configured subnet at most once. Each target receives the firmware-required
+`LAN_SEARCH3(w3=1)`, `LAN_SEARCH3(w3=2)`, `KNOCK2` sequence; a matching
+`KNOCK_RR2` UID and nonce identifies the feeder. All stages share one absolute
+deadline.
 
 An override item may contain `name`, `product`, `serial`, `uid`, and
 `ip_address`. `serial` identifies the record; supplied UID/IP fields win over
@@ -93,11 +101,20 @@ for payload fields and offline behavior.
 
 | Option | Default | Description |
 |---|---|---|
-| `verbose_logs` | `false` | Enables Petlibro debug logging, `verbose=1`, and AppDaemon debug level |
+| `log_level` | `info` | `critical`, `error`, `warning`, `info`, `debug`, or `trace` |
+| `verbose_logs` | `false` | Deprecated compatibility key; `true` migrates normal `info` logging to `debug` |
 | `enable_debug_dumps` | `false` | Writes decrypted C2D/D2C protocol dumps under `/data` |
 
-Debug dumps may contain device and session data. Disable the option and delete
-the files after collecting the evidence needed for diagnosis.
+`info` contains operational milestones. `debug` adds bounded resolver stats,
+registry changes, camera metadata transitions, and five-second go2rtc summaries
+without raw MQTT payloads. `trace` enables raw MQTT messages and the existing
+targeted packet, ACK, fragment, and frame-info traces and can be extremely
+noisy. AppDaemon itself remains at info level so its scheduler and state engine
+do not overwhelm application diagnostics.
+
+Debug dumps are independent of logging and may contain device and session
+data. Disable the option and delete the files after collecting the evidence
+needed for diagnosis.
 
 ## Network exposure
 

@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Callable
 
+from petlibro_logging import PetlibroLogger
+
 
 SCHEMA_VERSION = 1
 VALID_STATUSES = {"idle", "starting", "probing", "online", "offline", "error"}
@@ -76,6 +78,7 @@ class CameraMetadataPublisher:
         status_file: str,
         topic_prefix: str,
         heartbeat_seconds: int,
+        log_level: str = "info",
         now: Callable[[], datetime.datetime] | None = None,
     ):
         self.ad = ad
@@ -93,6 +96,7 @@ class CameraMetadataPublisher:
         )
         self.heartbeat_seconds = heartbeat_seconds
         self.now = now or (lambda: datetime.datetime.now(datetime.timezone.utc))
+        self.logger = PetlibroLogger(ad, "petlibro.camera", log_level)
         self.timer = None
         self.last_fingerprint = None
         self.last_availability = None
@@ -334,7 +338,7 @@ class CameraMetadataPublisher:
 
     def _log_source_problem(self, problem: str, message: str) -> None:
         if problem != self.last_source_problem:
-            self.ad.log(f"Petlibro camera metadata: {message}")
+            self.logger.warning(message)
             self.last_source_problem = problem
 
     def _clear_source_problem(self) -> None:
@@ -342,5 +346,5 @@ class CameraMetadataPublisher:
 
     def _log_publish_problem(self, problem: str, message: str) -> None:
         if problem != self.last_publish_problem:
-            self.ad.log(f"Petlibro camera metadata: {message}")
+            self.logger.error(message)
             self.last_publish_problem = problem

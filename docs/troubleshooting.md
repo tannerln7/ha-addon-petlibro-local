@@ -84,6 +84,13 @@ Publish `all` to `petlibro_local/discovery/refresh` for a manual address refresh
 The backend keeps the last known IP after failure and retries with configured
 backoff.
 
+At `log_level: debug`, the completion line reports the resolver method, elapsed
+time, broadcast and unicast counts, received and rejected responses, send
+errors, and final error code. `deadline_exceeded` means the bounded lookup
+finished normally without a match. `helper_timeout` means the child resolver
+failed to honor its deadline and the Python safety guard terminated it; this is
+an implementation failure rather than proof that the feeder is offline.
+
 ## Initial 640x360 stream before HD
 
 Tested PLAF203 firmware can start an HD session with a 640x360 SPS and switch to
@@ -103,9 +110,11 @@ send_delay_ctrl: true
 hd_probe_wait_ms: 15000
 ```
 
-Then enable `verbose_logs`. Petlibro statistics report packet families, media
-loss, ACK progress, SPS transitions, and assembler decisions without requiring
-raw dumps.
+Then set `log_level: debug`. Petlibro statistics report packet families, media
+loss, ACK progress, and SPS transitions without including raw packets or MQTT
+payloads. Escalate to `log_level: trace` only for a short reproduction that
+needs per-packet, ACK, fragment, frame-info, or raw MQTT evidence; trace can
+produce a very large volume of output.
 
 Enable `enable_debug_dumps` only when repeatable packet evidence is necessary.
 The add-on writes one pair per stream:
@@ -115,6 +124,9 @@ The add-on writes one pair per stream:
 
 Disable dumping after a short reproduction because files grow continuously and
 contain decrypted device/session traffic.
+
+Changing `log_level` does not enable or disable dump files. The two controls are
+deliberately independent.
 
 ## Backend cannot connect to MQTT
 

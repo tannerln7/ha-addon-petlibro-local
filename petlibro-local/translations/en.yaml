@@ -26,6 +26,12 @@ configuration:
   ip_resolve_timeout_seconds:
     name: IP resolution timeout
     description: Seconds allowed for each local camera-address search.
+  ip_discovery_broadcast_seconds:
+    name: Discovery broadcast duration
+    description: Seconds spent on low-impact broadcast discovery before subnet fallback.
+  ip_discovery_max_unicast_per_second:
+    name: Discovery unicast rate
+    description: Maximum paced UID-specific LAN probe exchanges started per second.
   ip_refresh_interval_minutes:
     name: IP refresh interval
     description: Minutes before a healthy cached camera address is resolved again.
@@ -69,8 +75,11 @@ configuration:
     name: Camera metadata heartbeat
     description: Seconds between retained metadata heartbeat refreshes.
   verbose_logs:
-    name: Verbose logs
-    description: Enable detailed Petlibro and AppDaemon diagnostics.
+    name: Legacy verbose logs
+    description: Deprecated compatibility option; use log level instead.
+  log_level:
+    name: Log level
+    description: Petlibro application logging level; trace is intentionally very noisy.
   enable_debug_dumps:
     name: Debug dumps
     description: Write sensitive decrypted protocol dumps to persistent add-on data.

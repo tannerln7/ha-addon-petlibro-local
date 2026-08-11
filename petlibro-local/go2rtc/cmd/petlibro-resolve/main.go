@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"os"
+	"os/signal"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/petlibro"
@@ -18,45 +21,44 @@ func (values *stringList) Set(value string) error {
 	return nil
 }
 
-type result struct {
-	UID       string `json:"uid"`
-	Subnet    string `json:"subnet,omitempty"`
-	IPAddress string `json:"ip_address,omitempty"`
-	Resolved  bool   `json:"resolved"`
-	Method    string `json:"method"`
-	ElapsedMS int64  `json:"elapsed_ms"`
-	Error     string `json:"error,omitempty"`
-}
-
 func main() {
 	var subnets stringList
+	var candidateValues stringList
 	uid := flag.String("uid", "", "exact 20-character Petlibro camera UID")
 	flag.Var(&subnets, "subnet", "IPv4 CIDR to scan; may be repeated")
-	timeout := flag.Duration("timeout", 10*time.Second, "overall discovery timeout")
+	cachedIP := flag.String("cached-ip", "", "previously resolved IP to verify first")
+	flag.Var(&candidateValues, "candidate", "known candidate IP to try before subnet fallback; may be repeated")
+	timeout := flag.Duration("timeout", 15*time.Second, "overall discovery timeout")
+	broadcastDuration := flag.Duration("broadcast-duration", 2*time.Second, "broadcast-first stage duration")
+	maxUnicastRate := flag.Int("max-unicast-per-second", 32, "maximum paced subnet probes per second")
 	jsonOutput := flag.Bool("json", false, "write one JSON result to stdout")
 	flag.Parse()
 
-	started := time.Now()
-	ip, err := petlibro.ResolveUID(*uid, subnets, *timeout)
-	output := result{
-		UID:       *uid,
-		Resolved:  err == nil,
-		Method:    "lan_search3",
-		ElapsedMS: time.Since(started).Milliseconds(),
+	var candidates []net.IP
+	for _, value := range candidateValues {
+		candidates = append(candidates, net.ParseIP(value))
 	}
-	if len(subnets) == 1 {
-		output.Subnet = subnets[0]
-	}
-	if err != nil {
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	output, err := petlibro.ResolveUIDContext(ctx, petlibro.ResolveOptions{
+		UID:                 *uid,
+		Subnets:             subnets,
+		CachedIP:            net.ParseIP(*cachedIP),
+		Candidates:          candidates,
+		Timeout:             *timeout,
+		BroadcastDuration:   *broadcastDuration,
+		MaxUnicastPerSecond: *maxUnicastRate,
+	})
+	if output.ErrorCode == "" && err != nil {
+		output.ErrorCode = "not_found"
 		output.Error = err.Error()
-	} else {
-		output.IPAddress = ip.String()
 	}
 
 	if *jsonOutput {
 		_ = json.NewEncoder(os.Stdout).Encode(output)
-	} else if err == nil {
-		fmt.Fprintln(os.Stdout, output.IPAddress)
+	} else if output.Resolved {
+		fmt.Fprintln(os.Stdout, *output.IPAddress)
 	} else {
 		fmt.Fprintln(os.Stderr, output.Error)
 	}

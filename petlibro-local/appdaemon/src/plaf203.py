@@ -6,6 +6,7 @@ import appdaemon.plugins.hass.hassapi as hassapi
 import appdaemon.plugins.mqtt.mqttapi as mqttapi
 
 from camera_metadata import CameraMetadataPublisher
+from petlibro_logging import PetlibroLogger
 
 from dataclasses import dataclass
 import datetime
@@ -2364,10 +2365,11 @@ class DeviceInfoServiceOut:
 
 # Client to communicate with the device using the stock firmware protocol over mqtt
 class Client:
-    def __init__(self, ad: adapi.ADAPI, mqtt: mqttapi.Mqtt, device_serial_number: str):
+    def __init__(self, ad: adapi.ADAPI, mqtt: mqttapi.Mqtt, device_serial_number: str, log_level: str = "info"):
         self.ad: adapi.ADAPI = ad
         self.mqtt: mqttapi.Mqtt = mqtt
         self.message_topics: MessageTopics = MessageTopics(device_serial_number)
+        self.logger = PetlibroLogger(ad, "petlibro.mqtt", log_level)
 
         # heart
 
@@ -2643,7 +2645,7 @@ class Client:
     ############################################################################
 
     def _mqtt_recv_heart_cb(self, eventname: str, data: dict, kwargs):
-        self.ad.log(data)
+        self._trace_mqtt("rx", data)
 
         payload: dict = json.loads(data['payload'])
         cmd: str = payload['cmd']
@@ -2653,10 +2655,10 @@ class Client:
                 heartbeat_in = HeartbeatIn.from_mqtt_payload(payload)
                 self.heartbeat_callback(heartbeat_in)
         else:
-            self.ad.error("Unknown cmd {} on heartbeat receive: {}".format(cmd, payload))
+            self.logger.warning("unknown MQTT command", channel="heartbeat", command=cmd)
 
     def _mqtt_recv_ntp_cb(self, eventname: str, data: dict, kwargs):
-        self.ad.log(data)
+        self._trace_mqtt("rx", data)
 
         payload: dict = json.loads(data['payload'])
         cmd: str = payload['cmd']
@@ -2670,10 +2672,10 @@ class Client:
                 ntp_sync_in = NtpSyncIn.from_mqtt_payload(payload)
                 self.ntp_sync_callback(ntp_sync_in)
         else:
-            self.ad.error("Unknown cmd {} on ntp receive: {}".format(cmd, payload))
+            self.logger.warning("unknown MQTT command", channel="ntp", command=cmd)
 
     def _mqtt_recv_ota_cb(self, eventname: str, data: dict, kwargs):
-        self.ad.log(data)
+        self._trace_mqtt("rx", data)
 
         payload: dict = json.loads(data['payload'])
         cmd: str = payload['cmd']
@@ -2691,10 +2693,10 @@ class Client:
                 ota_upgrade_in = OtaUpgradeIn.from_mqtt_payload(payload)
                 self.ota_upgrade_callback(ota_upgrade_in)
         else:
-            self.ad.error("Unknown cmd {} on ota receive: {}".format(cmd, payload))
+            self.logger.warning("unknown MQTT command", channel="ota", command=cmd)
 
     def _mqtt_recv_service_cb(self, eventname: str, data: dict, kwargs):
-        self.ad.log(data)
+        self._trace_mqtt("rx", data)
 
         payload: dict = json.loads(data['payload'])
         cmd: str = payload['cmd']
@@ -2748,7 +2750,7 @@ class Client:
                 wifi_reconnect_service_in = WifiReconnectServiceIn.from_mqtt_payload(payload)
                 self.wifi_reconnect_service_callback(wifi_reconnect_service_in)
         else:
-            self.ad.error("Unknown cmd {} on service receive: {}".format(cmd, payload))
+            self.logger.warning("unknown MQTT command", channel="service", command=cmd)
 
     def _mqtt_recv_event_cb(self, eventname: str, data: dict, kwargs):
         payload: dict = json.loads(data['payload'])
@@ -2756,12 +2758,12 @@ class Client:
 
         if cmd == Commands.DEVICE_LOG_REPORT_EVENT:
             device_log_report_event_in = DeviceLogReportEventIn.from_mqtt_payload(payload)
-            self.ad.log("Ignored DEVICE_LOG_REPORT_EVENT with {} entries".format(len(device_log_report_event_in.logs)))
+            self.logger.trace(
+                "ignored device log report", entries=len(device_log_report_event_in.logs)
+            )
             return
 
-        # cameraAuthInfo is credential-like and must never be copied into logs.
-        log_payload = payload | ({'cameraAuthInfo': '<redacted>'} if 'cameraAuthInfo' in payload else {})
-        self.ad.log(data | {'payload': json.dumps(log_payload)})
+        self._trace_mqtt("rx", data)
 
         # This service call is on the event "channel" for some reason :/
         if cmd == Commands.ATTR_GET_SERVICE:
@@ -2793,10 +2795,10 @@ class Client:
                 grain_output_event_in = GrainOutputEventIn.from_mqtt_payload(payload)
                 self.grain_output_event_callback(grain_output_event_in)
         else:
-            self.ad.error("Unknown cmd {} on event receive: {}".format(cmd, payload))
+            self.logger.warning("unknown MQTT command", channel="event", command=cmd)
 
     def _mqtt_recv_config_cb(self, eventname: str, data: dict, kwargs):
-        self.ad.log(data)
+        self._trace_mqtt("rx", data)
 
         payload: dict = json.loads(data['payload'])
         cmd: str = payload['cmd']
@@ -2810,10 +2812,10 @@ class Client:
                 server_config_push_in = ServerConfigPushIn.from_mqtt_payload(payload)
                 self.server_config_push_callback(server_config_push_in)
         else:
-            self.ad.error("Unknown cmd {} on config receive: {}".format(cmd, payload))
+            self.logger.warning("unknown MQTT command", channel="config", command=cmd)
 
     def _mqtt_recv_system_cb(self, eventname: str, data: dict, kwargs):
-        self.ad.log(data)
+        self._trace_mqtt("rx", data)
 
         payload: dict = json.loads(data['payload'])
         cmd: str = payload['cmd']
@@ -2839,7 +2841,7 @@ class Client:
                 unbind_in = UnbindIn.from_mqtt_payload(payload)
                 self.unbind_callback(unbind_in)
         else:
-            self.ad.error("Unknown cmd {} on system receive: {}".format(cmd, payload))
+            self.logger.warning("unknown MQTT command", channel="system", command=cmd)
 
     ############################################################################
 
@@ -2870,17 +2872,39 @@ class Client:
     def _mqtt_send(self, topic: str, payload: dict):
         payload_json: str = json.dumps(payload)
 
-        self.ad.log("{}: {}".format(topic, payload_json))
+        self.logger.trace(
+            "MQTT message",
+            direction="tx",
+            topic=topic,
+            command=payload.get("cmd"),
+            payload=payload,
+        )
 
         self.mqtt.mqtt_publish(topic, payload_json, namespace = "mqtt")
+
+    def _trace_mqtt(self, direction: str, data: dict):
+        payload = data.get("payload")
+        try:
+            decoded = json.loads(payload) if isinstance(payload, str) else payload
+        except json.JSONDecodeError:
+            decoded = "<invalid-json>"
+        command = decoded.get("cmd") if isinstance(decoded, dict) else None
+        self.logger.trace(
+            "MQTT message",
+            direction=direction,
+            topic=data.get("topic"),
+            command=command,
+            payload=decoded,
+        )
 
 ########################################################################################################################
 
 class Watchdog:
-    def __init__(self, ad: adapi.ADAPI, name: str, period_sec: int):
+    def __init__(self, ad: adapi.ADAPI, name: str, period_sec: int, log_level: str = "info"):
         self.ad: adapi.ADAPI = ad
         self.name = name
         self.period_sec = period_sec
+        self.logger = PetlibroLogger(ad, "petlibro.watchdog", log_level)
 
         self.handle = None
         self.trigger_callback = None
@@ -2889,7 +2913,7 @@ class Watchdog:
         self.trigger_callback = callback
 
     def reset(self):
-        self.ad.log("[{}] watchdog reset".format(self.name))
+        self.logger.trace("watchdog reset", name=self.name)
 
         self._cancel()
         self._schedule()
@@ -2903,7 +2927,7 @@ class Watchdog:
     def _watchdog_run(self, cb_args):
         self.handle = None
 
-        self.ad.log("[{}] watchdog triggered".format(self.name))
+        self.logger.warning("watchdog triggered", name=self.name)
 
         if not self.trigger_callback == None:
             self.trigger_callback()
@@ -3013,7 +3037,7 @@ class Backend:
     DEVICE_INIT_WATCHDOG_PERIOD_SEC: int = 10
     NTP_SYNC_TIME_DIFF_THRESHOLD_SEC: int = 10
 
-    def initialize(self, ad: adapi.ADAPI, mqtt: mqttapi.Mqtt, device_serial: str, mqtt_host: str, mqtt_port: int, food_plans: FoodPlans, https_addr: Optional[str] = None, tutk_p2p_region: str = 'REGION_US'):
+    def initialize(self, ad: adapi.ADAPI, mqtt: mqttapi.Mqtt, device_serial: str, mqtt_host: str, mqtt_port: int, food_plans: FoodPlans, https_addr: Optional[str] = None, tutk_p2p_region: str = 'REGION_US', log_level: str = "info"):
         self.mqtt_host: str = mqtt_host
         self.mqtt_port: int = mqtt_port
         self.https_addr: str = https_addr if https_addr is not None else mqtt_host
@@ -3022,10 +3046,11 @@ class Backend:
         self.food_plans: FoodPlans = food_plans
 
         self.ad: adapi.ADAPI = ad
+        self.logger = PetlibroLogger(ad, "petlibro.backend", log_level)
 
         self.device_serial = device_serial
 
-        self.client = Client(ad, mqtt, device_serial)
+        self.client = Client(ad, mqtt, device_serial, log_level)
 
         self.client.heartbeat_listen(self._heartbeat_cb)
 
@@ -3052,7 +3077,7 @@ class Backend:
 
         # Determine when the device is considered offline. The device sends a periodic
         # heartbeat message that is used to reset the watchdog
-        self.heartbeat_watchdog = Watchdog(ad, 'Heartbeat', Backend.HEARTBEAT_WATCHDOG_PERIOD_SEC)
+        self.heartbeat_watchdog = Watchdog(ad, 'Heartbeat', Backend.HEARTBEAT_WATCHDOG_PERIOD_SEC, log_level)
         # Ensure this is always reset, will fire if not coming (back) online after a restart
         # to update the state
         self.heartbeat_watchdog.reset()
@@ -3336,7 +3361,7 @@ class Backend:
             timestamp_now = Timestamp.now()
 
             if not self._device_timestamp_sync_drift_check(timestamp_now, heartbeat_in.timestamp):
-                self.ad.error("Device NTP sync not successful, timestamp local {} <-> timestamp device {}".format(timestamp_now, heartbeat_in.timestamp))
+                self.logger.error("device NTP synchronization failed", phase="heartbeat")
 
                 if not self.ntp_sync_status_callback == None:
                     self.ntp_sync_status_callback(False)
@@ -3362,7 +3387,7 @@ class Backend:
         # Initial NTP package is also a check if the device has to re-sync the time
         # Don't consider this an error, yet
         if not self._device_timestamp_sync_drift_check(timestamp_now, ntp_in.timestamp):
-            self.ad.log("Device NTP time drift detected, forcing time calibration on device")
+            self.logger.debug("device NTP drift detected; requesting calibration")
 
             force_time_calbiration = True
         else:
@@ -3383,7 +3408,7 @@ class Backend:
 
         # Basically just an ack from the device, but check again that drift is actually fine
         if not self._device_timestamp_sync_drift_check(timestamp_now, ntp_sync_in.timestamp):
-            self.ad.error("Device NTP sync not successful, timestamp local {} <-> timestamp device {}".format(timestamp_now, ntp_sync_in.timestamp))
+            self.logger.error("device NTP synchronization failed", phase="acknowledgement")
 
             if not self.ntp_sync_status_callback == None:
                 self.ntp_sync_status_callback(False)
@@ -3778,7 +3803,7 @@ class Backend:
             if not self.food_output_progress_callback == None:
                 self.food_output_progress_callback(FoodOutputProgress.IDLE)
         else:
-            self.ad.error("Unhandled grain_output_event.exec_step: {}".format(grain_output_event_in.exec_step))
+            self.logger.warning("unhandled grain-output step", step=grain_output_event_in.exec_step)
 
         grain_output_event_out = GrainOutputEventOut.create(
             message_id = grain_output_event_in.message_id,
@@ -3800,7 +3825,7 @@ class Backend:
         timestamp_now = Timestamp.now()
 
         if not self._device_timestamp_sync_drift_check(timestamp_now, timestamp_device):
-            self.ad.log("Device time drift detected, forcing NTP sync on device")
+            self.logger.debug("device time drift detected; forcing NTP sync")
 
             ntp_sync_out = NtpSyncOut.create()
             self.client.ntp_sync_send(ntp_sync_out)
@@ -3812,7 +3837,7 @@ class Backend:
 
     def _device_food_plans_sync(self, food_plans: FoodPlans, *, allow_empty: bool):
         if not food_plans.plans and not allow_empty:
-            self.ad.log("Skipping automatic feeding-plan sync because no plans are configured")
+            self.logger.debug("automatic feeding-plan sync skipped; no plans configured")
             return
 
         feeding_plans_out: [FeedingPlanOut] = []
@@ -4238,6 +4263,8 @@ class Plaf203(adbase.ADBase):
 
         self.ad: adapi.ADAPI = self.get_ad_api()
         self.mqtt: mqttapi.Mqtt = self.get_plugin_api("MQTT")
+        log_level = self.args.get('log_level', 'info')
+        self.logger = PetlibroLogger(self.ad, "petlibro.controller", log_level)
 
         self.camera_metadata = CameraMetadataPublisher(
             self.ad,
@@ -4255,9 +4282,10 @@ class Plaf203(adbase.ADBase):
                 'petlibro_local/{}/{}/camera'.format(
                     self.args.get('product', 'PLAF203'), self.serial_number)),
             heartbeat_seconds=int(self.args.get('camera_metadata_interval_seconds', 30)),
+            log_level=log_level,
         )
 
-        self.ad.log("Initializing plaf203, serial number {}".format(self.serial_number))
+        self.logger.info("controller initializing", serial=self.serial_number)
 
         self.storage = Storage(self.ad, 'plaf203', self.serial_number)
         self.storage.initialize()
@@ -4272,7 +4300,8 @@ class Plaf203(adbase.ADBase):
             mqtt_port,
             self.storage.food_plans_get(),
             https_addr = https_addr,
-            tutk_p2p_region = tutk_p2p_region)
+            tutk_p2p_region = tutk_p2p_region,
+            log_level=log_level)
 
         self._backend_listeners_register()
 
@@ -4327,14 +4356,14 @@ class Plaf203(adbase.ADBase):
         self.backend.food_output_progress_listen(self._food_output_progress_cb)
 
     def _persistent_state_recover(self):
-        self.ad.log("Recovering persistant state")
+        self.logger.debug("recovering persistent state")
 
         manual_feed_grain_num = self.storage.food_manual_feed_grain_num_get()
         self._food_manual_feed_grain_num_set(manual_feed_grain_num)
 
         food_plans: FoodPlans = self.storage.food_plans_get()
 
-        self.ad.log("Stored food plans: {}".format(food_plans))
+        self.logger.debug("stored feeding plans recovered", plans=len(food_plans.plans))
 
         self._food_plans_set(food_plans)
 
@@ -4400,7 +4429,7 @@ class Plaf203(adbase.ADBase):
     ############################################################################
 
     def _went_online_cb(self):
-        self.ad.log("Went online")
+        self.logger.info("device online", serial=self.serial_number)
         self._device_online_set(True)
 
         # Clear error state
@@ -4408,26 +4437,32 @@ class Plaf203(adbase.ADBase):
         self._device_error_message_set("No error")
 
     def _went_offline_cb(self):
-        self.ad.log("Went offline")
+        self.logger.info("device offline", serial=self.serial_number)
         self._device_online_set(False)
 
     def _ntp_sync_status_cb(self, successful_correction: bool):
         if successful_correction == True:
-            self.ad.log("NTP sync on device corrected")
+            self.logger.debug("device NTP correction succeeded")
             now = datetime.datetime.now().astimezone()
             self._device_ntp_last_correct(now)
         else:
-            self.ad.log("NTP sync correction on device failed")
+            self.logger.warning("device NTP correction failed")
             self._device_error_state_set(True)
             self._device_error_message_set("NTP sync with device failed")
 
     def _error_cb(self, message: str):
-        self.ad.error("Error: {}".format(message))
+        self.logger.error("device error", detail=message)
         self._device_error_state_set(True)
         self._device_error_message_set(message)
 
     def _device_info_cb(self, device_serial: str = None, product_id: str = None, uuid: str = None, hardware_version: str = None, software_version: str = None):
-        self.ad.log("Device info: {}, {}, {}, {}, {}".format(device_serial, product_id, uuid, hardware_version, software_version))
+        self.logger.debug(
+            "device information updated",
+            serial=device_serial,
+            product=product_id,
+            hardware=hardware_version,
+            software=software_version,
+        )
 
         if not device_serial == None:
             self._device_serial_number_set(device_serial)
@@ -4445,7 +4480,7 @@ class Plaf203(adbase.ADBase):
             self._device_software_version_set(software_version)
 
     def _device_wifi_info_cb(self, mac_address: str = None, rssi: int = None, type_: WifiType = None, ssid: str = None):
-        self.ad.log("Device wifi info: {}, {}, {}, {}".format(mac_address, rssi, type_, ssid))
+        self.logger.debug("device Wi-Fi information updated", rssi=rssi, wifi_type=type_)
 
         if not mac_address == None:
             self._wifi_mac_address_set(mac_address)
@@ -4460,7 +4495,13 @@ class Plaf203(adbase.ADBase):
             self._wifi_ssid_set(ssid)
 
     def _device_sd_card_info_cb(self, state: SdCardState = None, file_system: SdCardFileSystem = None, total_capacity_mb: int = None, used_capacity_mb: int = None):
-        self.ad.log("Device SD card info: {}, {}, {}, {}".format(state, file_system, total_capacity_mb, used_capacity_mb))
+        self.logger.debug(
+            "SD card state updated",
+            state=state,
+            file_system=file_system,
+            total_capacity_mb=total_capacity_mb,
+            used_capacity_mb=used_capacity_mb,
+        )
 
         if not state == None:
             self._sd_card_state_set(state)
@@ -4475,7 +4516,7 @@ class Plaf203(adbase.ADBase):
             self._sd_card_used_capacity_set(used_capacity_mb)
 
     def _settings_audio_cb(self, enable: bool = None, url: str = None):
-        self.ad.log("Settings audio: {}, {}".format(enable, url))
+        self.logger.debug("audio settings updated", enabled=enable, url_present=bool(url))
 
         if not enable == None:
             self._audio_enable_set(enable)
@@ -4484,7 +4525,14 @@ class Plaf203(adbase.ADBase):
             self._audio_url_set(url)
 
     def _settings_camera_cb(self, feature_enabled: bool = None, enable: bool = None, aging_type: AgingType = None, night_vision: NightVision = None, resolution: Resolution = None):
-        self.ad.log("Settings camera: {}, {}, {}, {}, {}".format(feature_enabled, enable, aging_type, night_vision, resolution))
+        self.logger.debug(
+            "camera settings updated",
+            feature_enabled=feature_enabled,
+            enabled=enable,
+            aging_type=aging_type,
+            night_vision=night_vision,
+            resolution=resolution,
+        )
 
         if not feature_enabled == None:
             self._camera_feature_enabled_set(feature_enabled)
@@ -4502,7 +4550,13 @@ class Plaf203(adbase.ADBase):
             self._camera_resolution_set(resolution)
 
     def _settings_recording_cb(self, feature_enabled: bool = None, enable: bool = None, aging_type: AgingType = None, mode: VideoRecordMode = None):
-        self.ad.log("Settings recording: {}, {}, {}, {}".format(feature_enabled, enable, aging_type, mode))
+        self.logger.debug(
+            "recording settings updated",
+            feature_enabled=feature_enabled,
+            enabled=enable,
+            aging_type=aging_type,
+            mode=mode,
+        )
 
         if not feature_enabled == None:
             self._recording_feature_enabled_set(feature_enabled)
@@ -4517,7 +4571,14 @@ class Plaf203(adbase.ADBase):
             self._recording_mode_set(mode)
 
     def _settings_motion_detection_cb(self, feature_enabled: bool = None, enable: bool = None, aging_type: AgingType = None, range_: MotionDetectionRange = None, sensitivity: MotionDetectionSensitivity = None):
-        self.ad.log("Settings motion detection: {}, {}, {}, {}, {}".format(feature_enabled, enable, aging_type, range_, sensitivity))
+        self.logger.debug(
+            "motion-detection settings updated",
+            feature_enabled=feature_enabled,
+            enabled=enable,
+            aging_type=aging_type,
+            range=range_,
+            sensitivity=sensitivity,
+        )
 
         if not feature_enabled == None:
             self._motion_detection_feature_enabled_set(feature_enabled)
@@ -4535,7 +4596,13 @@ class Plaf203(adbase.ADBase):
             self._motion_detection_sensitivity_set(sensitivity)
 
     def _settings_sound_detection_cb(self, feature_enabled: bool = None, enable: bool = None, aging_type: AgingType = None, sensitivity: SoundDetectionSensitivity = None):
-        self.ad.log("Settings sound detection: {}, {}, {}, {}".format(feature_enabled, enable, aging_type, sensitivity))
+        self.logger.debug(
+            "sound-detection settings updated",
+            feature_enabled=feature_enabled,
+            enabled=enable,
+            aging_type=aging_type,
+            sensitivity=sensitivity,
+        )
 
         if not feature_enabled == None:
             self._sound_detection_feature_enabled_set(feature_enabled)
@@ -4550,13 +4617,19 @@ class Plaf203(adbase.ADBase):
             self._sound_detection_sensitivity_set(sensitivity)
 
     def _settings_cloud_video_recording_cb(self, enable: bool):
-        self.ad.log("Settings cloud video recording: {}".format(enable))
+        self.logger.debug("cloud-recording settings updated", enabled=enable)
 
         if not enable == None:
             self._cloud_video_recording_enable_set(enable)
 
     def _settings_sound_cb(self, feature_enabled: bool = None, enable: bool = None, aging_type: AgingType = None, volume: PercentageInt = None):
-        self.ad.log("Settings sound: {}, {}, {}, {}".format(feature_enabled, enable, aging_type, volume))
+        self.logger.debug(
+            "sound settings updated",
+            feature_enabled=feature_enabled,
+            enabled=enable,
+            aging_type=aging_type,
+            volume=volume,
+        )
 
         if not feature_enabled == None:
             self._sound_feature_enabled_set(feature_enabled)
@@ -4571,7 +4644,12 @@ class Plaf203(adbase.ADBase):
             self._sound_volume_set(volume)
 
     def _settings_button_lights_cb(self, feature_enabled: bool = None, enable: bool = None, aging_type: AgingType = None):
-        self.ad.log("Settings light: {}, {}, {}".format(feature_enabled, enable, aging_type))
+        self.logger.debug(
+            "button-light settings updated",
+            feature_enabled=feature_enabled,
+            enabled=enable,
+            aging_type=aging_type,
+        )
 
         if not feature_enabled == None:
             self._button_lights_feature_enabled_set(feature_enabled)
@@ -4583,15 +4661,16 @@ class Plaf203(adbase.ADBase):
             self._button_lights_aging_type_set(aging_type)
 
     def _settings_feeding_video_cb(self, enable: bool = None, video_on_start_feeding_plan: bool = None, video_after_manual_feeding: bool = None, recording_length_before_feeding_plan_time: int = None, recording_length_after_manual_feeding_time: int = None, video_watermark: bool = None, automatic_recording: int = None):
-        self.ad.log("Settings feeding video: {}, {}, {}, {}, {}, {}, {}".format(
-            enable,
-            video_on_start_feeding_plan,
-            video_after_manual_feeding,
-            recording_length_before_feeding_plan_time,
-            recording_length_after_manual_feeding_time,
-            video_watermark,
-            automatic_recording
-        ))
+        self.logger.debug(
+            "feeding-video settings updated",
+            enabled=enable,
+            plan_video=video_on_start_feeding_plan,
+            manual_video=video_after_manual_feeding,
+            before_seconds=recording_length_before_feeding_plan_time,
+            after_seconds=recording_length_after_manual_feeding_time,
+            watermark=video_watermark,
+            automatic_recording=automatic_recording,
+        )
 
         if not enable == None:
             self._feeding_video_enable(enable)
@@ -4615,7 +4694,7 @@ class Plaf203(adbase.ADBase):
             self._feeding_video_watermark(video_watermark)
 
     def _settings_buttons_auto_lock_cb(self, enable: bool = None, threshold: int = None):
-        self.ad.log("Settings buttons auto lock: {}, {}".format(enable, threshold))
+        self.logger.debug("button-lock settings updated", enabled=enable, threshold=threshold)
 
         if not enable == None:
             self._buttons_auto_lock_enable_set(enable)
@@ -4624,7 +4703,9 @@ class Plaf203(adbase.ADBase):
             self._buttons_auto_lock_threshold_set(threshold)
 
     def _state_power_cb(self, battery_level: PercentInt = None, mode: PowerMode = None, type_: PowerType = None):
-        self.ad.log("State power: {}, {}, {}".format(battery_level, mode, type_))
+        self.logger.debug(
+            "power state updated", battery_level=battery_level, mode=mode, power_type=type_
+        )
 
         if not battery_level == None:
             self._power_battery_level_set(battery_level)
@@ -4636,7 +4717,12 @@ class Plaf203(adbase.ADBase):
             self._power_type_set(type_)
 
     def _state_food_cb(self, motor_state: int = None, outlet_blocked: bool = None, low_fill_level: bool = None):
-        self.ad.log("State food: {}, {}, {}".format(motor_state, outlet_blocked, low_fill_level))
+        self.logger.debug(
+            "food state updated",
+            motor_state=motor_state,
+            outlet_blocked=outlet_blocked,
+            low_fill_level=low_fill_level,
+        )
 
         if not motor_state == None:
             self._food_motor_state_set(motor_state)
@@ -4648,7 +4734,9 @@ class Plaf203(adbase.ADBase):
             self._food_low_fill_level_set(low_fill_level)
 
     def _food_output_log_start_cb(self, grain_output_type: GrainOutputType, grain_num: int):
-        self.ad.log("Food output start: {}, {}".format(grain_output_type, grain_num))
+        self.logger.info(
+            "food output started", output_type=grain_output_type, grain_count=grain_num
+        )
 
         now = datetime.datetime.now().astimezone()
         self._food_output_last_start_set(now)
@@ -4656,13 +4744,15 @@ class Plaf203(adbase.ADBase):
         self._food_output_last_trigger_set(grain_output_type)
 
     def _food_output_log_end_cb(self, grain_output_type: GrainOutputType, grain_num: int):
-        self.ad.log("Food output end: {}, {}".format(grain_output_type, grain_num))
+        self.logger.info(
+            "food output completed", output_type=grain_output_type, grain_count=grain_num
+        )
 
         now = datetime.datetime.now().astimezone()
         self._food_output_last_end_set(now)
 
     def _food_output_progress_cb(self, food_output_progress: FoodOutputProgress):
-        self.ad.log("Food output progress: {}".format(food_output_progress))
+        self.logger.debug("food output progress", progress=food_output_progress)
 
         self._food_output_progress_set(food_output_progress)
 
@@ -5026,8 +5116,9 @@ class Plaf203(adbase.ADBase):
             payload = json.loads(data['payload'])
             food_plan = FoodPlan.from_dict(payload)
         except Exception as error:
-            self.ad.log("WARNING: Invalid input for food plan payload, ignoring: {}".format(data['payload']))
-            self.ad.log("Exception message: {}".format(error))
+            self.logger.warning(
+                "invalid feeding-plan command ignored", error_type=type(error).__name__
+            )
             return
 
         food_plans: FoodPlans = self.storage.food_plans_get()

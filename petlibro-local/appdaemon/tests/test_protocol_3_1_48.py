@@ -159,6 +159,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         )
         backend = p.Backend()
         backend.ad = self.ad
+        backend.logger = p.PetlibroLogger(self.ad, "petlibro.backend", "debug")
         backend.client = client
         backend.device_serial = 'SERIAL'
         backend.food_plans = food_plans
@@ -190,8 +191,10 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             backend._heartbeat_cb(heartbeat)
 
         self.assertEqual([False], statuses)
-        self.assertEqual(1, len(self.ad.errors))
-        self.assertIn(str(heartbeat_timestamp), self.ad.errors[0])
+        self.assertEqual([], self.ad.errors)
+        self.assertTrue(
+            any("device NTP synchronization failed" in message for message in self.ad.logs)
+        )
         self.assertTrue(backend.is_online)
         self.assertIn(('watchdog_reset', None), calls)
 
@@ -202,9 +205,11 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         backend._heartbeat_cb(heartbeat)
 
         self.assertNotIn('feeding_plan', [name for name, _payload in calls])
-        self.assertIn(
-            'Skipping automatic feeding-plan sync because no plans are configured',
-            self.ad.logs,
+        self.assertTrue(
+            any(
+                "automatic feeding-plan sync skipped" in message
+                for message in self.ad.logs
+            )
         )
 
     def test_explicit_plan_update_sends_non_empty_plan(self):
@@ -315,7 +320,11 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.client._mqtt_recv_event_cb('', {'payload': json.dumps(request)}, {})
         self.assertEqual([], self.mqtt.published)
         self.assertEqual([], self.ad.errors)
-        self.assertIn('Ignored DEVICE_LOG_REPORT_EVENT', self.ad.logs[-1])
+        self.assertEqual([], self.ad.logs)
+
+        self.client.logger.level = "trace"
+        self.client._mqtt_recv_event_cb('', {'payload': json.dumps(request)}, {})
+        self.assertIn('ignored device log report', self.ad.logs[-1])
 
     def test_adjacent_runtime_name_fixes(self):
         self.assertEqual(23, p.HourMinTimestamp.from_mqtt_payload_value('23:00').time.hour)

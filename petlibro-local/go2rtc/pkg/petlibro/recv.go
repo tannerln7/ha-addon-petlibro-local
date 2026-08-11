@@ -29,7 +29,7 @@ func (c *Client) handleEncryptedDatagram(raw []byte) {
 	// read syscall instead of inside the read loop itself.
 	pkt := tutk.ReverseTransCodePartial(nil, raw)
 	if c.verbose && c.tracePackets {
-		log.Debug().Int("wireLen", len(raw)).Hex("plain", pkt).Msg("petlibro D2C packet")
+		log.Trace().Int("wireLen", len(raw)).Hex("plain", pkt).Msg("petlibro D2C packet")
 	}
 	if c.d2cPlainDump != nil {
 		record := make([]byte, 4+len(pkt))
@@ -466,7 +466,7 @@ func (c *Client) maintenanceLoop() {
 				tick := tick16()
 				body := innerAck(c.icounter, fields.prev, fields.current, chanIdx, subIdx, tick)
 				if c.verbose && c.traceACK {
-					log.Debug().
+					log.Trace().
 						Str("ackMode", string(c.ackMode)).
 						Str("avPrevRole", fields.prevRole).
 						Str("avCurrRole", fields.currentRole).

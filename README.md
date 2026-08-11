@@ -70,9 +70,13 @@ the CPU until it finishes.
 Serial, camera UID, and device IP are normally automatic. The backend reads the
 serial from `dl/PLAF203/<serial>/device/...`, reads the UID from the feeder's
 `DEVICE_START_EVENT`, and resolves the current address with the camera's
-LAN_SEARCH3 protocol over `lan_cidr`. It persists this mapping in a private
-registry and creates one direct-IP go2rtc stream per discovered feeder. The
-optional `devices` list is an advanced fallback for manual overrides.
+UID-specific LAN probe over `lan_cidr`. Resolution tries a cached address and
+broadcast first, then known candidates, and performs at most one rate-limited
+subnet sweep under a single deadline. The probe completes the firmware's
+`LAN_SEARCH3(w3=1,w3=2)` and `KNOCK2` exchange and validates the UID and nonce in
+`KNOCK_RR2`. It persists this mapping in a private registry and creates one
+direct-IP go2rtc stream per discovered feeder. The optional `devices` list is
+an advanced fallback for manual overrides.
 
 The default broker hostname is `core-mosquitto`. A broker must already exist,
 and it must authenticate both the backend identity configured here and the
@@ -101,6 +105,11 @@ The backend publishes retained discovery progress under
 state under `petlibro_local/<product>/<serial>/camera`. See the
 [MQTT camera contract](docs/mqtt-camera-contract.md) for the versioned JSON
 schema and availability behavior.
+
+Operational logs default to `log_level: info`. Use `debug` for bounded resolver,
+registry, and camera summaries; use `trace` only for a short protocol
+reproduction because it includes high-volume MQTT and camera packet details.
+`enable_debug_dumps` is independent and writes sensitive decrypted traffic.
 
 ## Endpoints
 

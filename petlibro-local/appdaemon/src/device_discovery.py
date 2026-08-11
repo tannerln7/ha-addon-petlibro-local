@@ -14,6 +14,7 @@ from typing import Callable
 
 from appdaemon.adbase import ADBase
 from appdaemon.exceptions import DomainException
+from petlibro_logging import PetlibroLogger
 
 
 SCHEMA_VERSION = 1
@@ -258,31 +259,139 @@ class DeviceRegistry:
         return ready if isinstance(ready, dict) else {}
 
 
-def resolve_uid(command: str, uid: str, subnet: str, timeout_seconds: int) -> dict:
-    completed = subprocess.run(
-        [
-            command,
-            "--uid",
-            uid,
-            "--subnet",
-            subnet,
-            "--timeout",
-            f"{timeout_seconds}s",
-            "--json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=timeout_seconds + 5,
-        check=False,
-    )
+def _resolver_failure(error_code: str, message: str, elapsed_ms: int = 0) -> dict:
+    return {
+        "resolved": False,
+        "method": "not_found",
+        "elapsed_ms": elapsed_ms,
+        "error_code": error_code,
+        "error": message,
+        "stats": {
+            "broadcasts_sent": 0,
+            "unicasts_sent": 0,
+            "packets_received": 0,
+            "responses_rejected": 0,
+            "send_errors": 0,
+            "deadline_exceeded": error_code in {"deadline_exceeded", "helper_timeout"},
+        },
+    }
+
+
+def _valid_resolver_result(result: object) -> bool:
+    if not isinstance(result, dict) or not isinstance(result.get("resolved"), bool):
+        return False
+    if not isinstance(result.get("method"), str):
+        return False
+    elapsed = result.get("elapsed_ms")
+    if isinstance(elapsed, bool) or not isinstance(elapsed, int) or elapsed < 0:
+        return False
+    stats = result.get("stats")
+    if not isinstance(stats, dict):
+        return False
+    for key in (
+        "broadcasts_sent",
+        "unicasts_sent",
+        "packets_received",
+        "responses_rejected",
+        "send_errors",
+    ):
+        value = stats.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return False
+    return isinstance(stats.get("deadline_exceeded"), bool)
+
+
+def resolve_uid(
+    command: str,
+    uid: str,
+    subnet: str,
+    timeout_seconds: int,
+    broadcast_seconds: int = 2,
+    max_unicast_per_second: int = 32,
+    cached_ip: str | None = None,
+    candidates: tuple[str, ...] = (),
+) -> dict:
+    args = [
+        command,
+        "--uid",
+        uid,
+        "--subnet",
+        subnet,
+        "--timeout",
+        f"{timeout_seconds}s",
+        "--broadcast-duration",
+        f"{broadcast_seconds}s",
+        "--max-unicast-per-second",
+        str(max_unicast_per_second),
+        "--json",
+    ]
+    if cached_ip:
+        args.extend(("--cached-ip", cached_ip))
+    for candidate in candidates:
+        args.extend(("--candidate", candidate))
+    started = utc_now()
+    try:
+        completed = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds + 2,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        elapsed_ms = int((utc_now() - started).total_seconds() * 1000)
+        return _resolver_failure(
+            "helper_timeout", "resolver exceeded its safety timeout", elapsed_ms
+        )
+    except OSError as err:
+        elapsed_ms = int((utc_now() - started).total_seconds() * 1000)
+        return _resolver_failure(
+            "send_failed", f"resolver could not start ({type(err).__name__})", elapsed_ms
+        )
     try:
         result = json.loads(completed.stdout)
     except json.JSONDecodeError as err:
-        raise RuntimeError("resolver returned invalid JSON") from err
-    if not isinstance(result, dict) or not isinstance(result.get("resolved"), bool):
-        raise RuntimeError("resolver result has an invalid schema")
+        return _resolver_failure(
+            "invalid_helper_output",
+            f"resolver returned invalid JSON ({type(err).__name__})",
+            int((utc_now() - started).total_seconds() * 1000),
+        )
+    if not _valid_resolver_result(result):
+        return _resolver_failure(
+            "invalid_helper_output",
+            "resolver result has an invalid schema",
+            int((utc_now() - started).total_seconds() * 1000),
+        )
     if result["resolved"]:
-        ipaddress.ip_address(str(result.get("ip_address", "")))
+        try:
+            ipaddress.ip_address(str(result.get("ip_address", "")))
+        except ValueError:
+            return _resolver_failure(
+                "invalid_helper_output",
+                "resolver returned an invalid IP address",
+                int((utc_now() - started).total_seconds() * 1000),
+            )
+        if completed.returncode != 0:
+            return _resolver_failure(
+                "invalid_helper_output",
+                "resolver reported success with a nonzero exit status",
+                int((utc_now() - started).total_seconds() * 1000),
+            )
+    elif completed.returncode == 0:
+        result["error_code"] = "invalid_helper_output"
+        result["error"] = "resolver reported failure with a zero exit status"
+    elif result.get("error_code") not in {
+        "not_found",
+        "deadline_exceeded",
+        "send_failed",
+        "invalid_response",
+        "invalid_request",
+    }:
+        return _resolver_failure(
+            "invalid_helper_output",
+            "resolver failure omitted a recognized error code",
+            int((utc_now() - started).total_seconds() * 1000),
+        )
     return result
 
 
@@ -320,7 +429,13 @@ class PetlibroDiscovery(ADBase):
         self.enabled = bool(self.args.get("enabled", True))
         self.product_filter = str(self.args.get("product_filter", "PLAF203"))
         self.lan_cidr = str(self.args["lan_cidr"])
-        self.timeout_seconds = int(self.args.get("ip_resolve_timeout_seconds", 10))
+        self.timeout_seconds = int(self.args.get("ip_resolve_timeout_seconds", 15))
+        self.broadcast_seconds = int(
+            self.args.get("ip_discovery_broadcast_seconds", 2)
+        )
+        self.max_unicast_per_second = int(
+            self.args.get("ip_discovery_max_unicast_per_second", 32)
+        )
         self.refresh_minutes = int(self.args.get("ip_refresh_interval_minutes", 360))
         self.retry_seconds = int(self.args.get("ip_retry_backoff_seconds", 60))
         self.publish_ip = bool(self.args.get("publish_discovery_ip", True))
@@ -329,9 +444,13 @@ class PetlibroDiscovery(ADBase):
         self.reloader = RuntimeReloader(
             str(self.args["renderer_command"]), str(self.args["go2rtc_service"])
         )
+        self.logger = PetlibroLogger(
+            self.ad, "petlibro.discovery", self.args.get("log_level", "info")
+        )
         self.flush_handle = None
         self.config_dirty = False
         self.resolving: set[str] = set()
+        self.resolve_futures = set()
         self.publish_unavailable = False
         if self.enabled:
             self.mqtt.listen_event(
@@ -354,6 +473,9 @@ class PetlibroDiscovery(ADBase):
             self.ad.cancel_timer(self.timer, True)
         if self.flush_handle is not None:
             self.ad.cancel_timer(self.flush_handle, True)
+        for future in self.resolve_futures:
+            future.cancel()
+        self.resolve_futures.clear()
 
     def _mqtt_device_event(self, _event_name: str, data: dict, _kwargs) -> None:
         parsed = parse_device_topic(data.get("topic"), self.product_filter)
@@ -365,6 +487,10 @@ class PetlibroDiscovery(ADBase):
             data.get("topic"), data.get("payload"), self.product_filter
         )
         uid_changed = self.registry.set_uid(device, uid) if uid is not None else False
+        if created:
+            self.logger.info("device discovered", product=product, serial=serial)
+        if uid_changed:
+            self.logger.info("camera UID discovered", product=product, serial=serial)
         self._schedule_flush(config_dirty=created or uid_changed)
         if uid is not None:
             self._schedule_resolution(key, force=False)
@@ -395,14 +521,13 @@ class PetlibroDiscovery(ADBase):
             try:
                 restarted = self.reloader.apply()
             except (OSError, subprocess.SubprocessError) as err:
-                self.ad.log(
-                    f"Petlibro discovery: configuration update failed ({type(err).__name__})"
+                self.logger.error(
+                    "configuration update failed", error_type=type(err).__name__
                 )
                 self.flush_handle = self.ad.run_in(self._flush, self.retry_seconds)
             else:
-                self.ad.log(
-                    "Petlibro discovery: configuration updated"
-                    + ("; go2rtc restarted" if restarted else "")
+                self.logger.info(
+                    "configuration updated", go2rtc_restarted=restarted
                 )
                 self.config_dirty = False
         self._publish_all()
@@ -459,8 +584,8 @@ class PetlibroDiscovery(ADBase):
         if not force and not self._resolution_due(device, utc_now(), False):
             return
         self.resolving.add(key)
-        # Give the debounced app-config write time to create the device's
-        # controller before a potentially blocking LAN lookup begins.
+        # Give the debounced app-config write time to create the controller;
+        # _resolve only submits work and returns immediately.
         self.ad.run_in(self._resolve, 2, device_key=key)
 
     def _resolve(self, kwargs: dict) -> None:
@@ -469,35 +594,139 @@ class PetlibroDiscovery(ADBase):
         if device is None:
             self.resolving.discard(key)
             return
-        old_ip = device.get("ip_address")
+        uid = str(device["uid"])
+        cached_ip = str(device.get("ip_address") or "") or None
+        candidates = tuple(self._known_candidate_ips(key))
+        try:
+            future = self.ad.submit_to_executor(
+                self._resolve_worker,
+                key,
+                uid,
+                cached_ip,
+                candidates,
+                callback=self._resolve_complete,
+            )
+        except Exception as err:
+            self.resolving.discard(key)
+            self.logger.error(
+                "resolver submission failed",
+                device=key,
+                error_type=type(err).__name__,
+            )
+            self.registry.resolution_failed(device)
+            self._schedule_flush(config_dirty=False)
+            return
+        self.resolve_futures.add(future)
+        self.logger.debug(
+            "resolver submitted",
+            device=key,
+            cached=bool(cached_ip),
+            candidates=len(candidates),
+        )
+
+    def _resolve_worker(
+        self,
+        key: str,
+        uid: str,
+        cached_ip: str | None,
+        candidates: tuple[str, ...],
+    ) -> dict:
         try:
             result = resolve_uid(
                 self.resolver_command,
-                str(device["uid"]),
+                uid,
                 self.lan_cidr,
                 self.timeout_seconds,
+                self.broadcast_seconds,
+                self.max_unicast_per_second,
+                cached_ip,
+                candidates,
             )
-            if not result["resolved"]:
-                self.registry.resolution_failed(device)
-                self.ad.log(f"Petlibro discovery: IP resolution failed for {key}")
-                changed = False
-            else:
-                changed = self.registry.resolution_succeeded(
-                    device, str(result["ip_address"])
-                )
-                self.ad.log(f"Petlibro discovery: resolved IP for {key}")
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as err:
-            self.registry.resolution_failed(device)
-            self.ad.log(
-                f"Petlibro discovery: IP resolution failed for {key} ({type(err).__name__})"
+        except Exception as err:
+            result = _resolver_failure(
+                "invalid_helper_output",
+                f"resolver worker failed ({type(err).__name__})",
             )
+        return {"device_key": key, "uid": uid, "result": result}
+
+    def _resolve_complete(self, work: dict, **_kwargs) -> None:
+        self.resolve_futures = {
+            future for future in self.resolve_futures if not future.done()
+        }
+        key = str(work.get("device_key", ""))
+        attempted_uid = str(work.get("uid", ""))
+        result = work.get("result")
+        device = self.registry.devices.get(key)
+        self.resolving.discard(key)
+        if device is None or device.get("uid") != attempted_uid:
+            self.logger.debug("discarded stale resolver result", device=key)
+            return
+
+        old_ip = device.get("ip_address")
+        stats = result.get("stats", {}) if isinstance(result, dict) else {}
+        resolved = isinstance(result, dict) and result.get("resolved") is True
+        if resolved:
+            changed = self.registry.resolution_succeeded(
+                device, str(result["ip_address"])
+            )
+            self.logger.info(
+                "IP resolved",
+                device=key,
+                ip_address=result.get("ip_address"),
+                method=result.get("method"),
+                elapsed_ms=result.get("elapsed_ms"),
+            )
+        else:
             changed = False
-        finally:
-            self.resolving.discard(key)
+            self.registry.resolution_failed(device)
+            error_code = (
+                result.get("error_code", "invalid_helper_output")
+                if isinstance(result, dict)
+                else "invalid_helper_output"
+            )
+            log_method = (
+                self.logger.warning
+                if error_code in {"not_found", "deadline_exceeded", "helper_timeout"}
+                else self.logger.error
+            )
+            log_method(
+                "IP resolution failed",
+                device=key,
+                error_code=error_code,
+                elapsed_ms=result.get("elapsed_ms") if isinstance(result, dict) else None,
+            )
+
+        self.logger.debug(
+            "resolver stats",
+            device=key,
+            method=result.get("method") if isinstance(result, dict) else None,
+            elapsed_ms=result.get("elapsed_ms") if isinstance(result, dict) else None,
+            broadcasts=stats.get("broadcasts_sent"),
+            unicasts=stats.get("unicasts_sent"),
+            received=stats.get("packets_received"),
+            rejected=stats.get("responses_rejected"),
+            send_errors=stats.get("send_errors"),
+        )
         self._schedule_flush(
             config_dirty=changed
             or (old_ip is None and device.get("ip_address") is not None)
         )
+
+    def _known_candidate_ips(self, current_key: str) -> list[str]:
+        candidates = []
+        for key, device in self.registry.devices.items():
+            if key == current_key:
+                continue
+            value = device.get("ip_address")
+            try:
+                parsed = ipaddress.ip_address(str(value))
+            except ValueError:
+                continue
+            if parsed.version == 4 and parsed.compressed not in candidates:
+                candidates.append(parsed.compressed)
+            if len(candidates) >= 32:
+                break
+        return candidates
 
     def _publish_all(self) -> None:
         payloads = []
@@ -528,8 +757,8 @@ class PetlibroDiscovery(ADBase):
             )
         except DomainException:
             if not self.publish_unavailable:
-                self.ad.log(
-                    "Petlibro discovery: MQTT is unavailable; readiness publish deferred"
+                self.logger.warning(
+                    "MQTT unavailable; readiness publish deferred"
                 )
             self.publish_unavailable = True
             return False

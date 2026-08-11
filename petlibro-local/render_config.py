@@ -24,7 +24,9 @@ DEFAULTS = {
     "device_discovery": True,
     "product_filter": "PLAF203",
     "lan_cidr": "192.168.1.0/24",
-    "ip_resolve_timeout_seconds": 10,
+    "ip_resolve_timeout_seconds": 15,
+    "ip_discovery_broadcast_seconds": 2,
+    "ip_discovery_max_unicast_per_second": 32,
     "ip_refresh_interval_minutes": 360,
     "ip_retry_backoff_seconds": 60,
     "devices": [],
@@ -39,6 +41,7 @@ DEFAULTS = {
     "publish_camera_metadata": True,
     "camera_metadata_topic_prefix": "",
     "camera_metadata_interval_seconds": 30,
+    "log_level": "info",
     "verbose_logs": False,
     "enable_debug_dumps": False,
 }
@@ -61,6 +64,8 @@ BOOL_KEYS = {
 INT_KEYS = {
     "mqtt_port",
     "ip_resolve_timeout_seconds",
+    "ip_discovery_broadcast_seconds",
+    "ip_discovery_max_unicast_per_second",
     "ip_refresh_interval_minutes",
     "ip_retry_backoff_seconds",
     "hd_probe_wait_ms",
@@ -115,6 +120,11 @@ def load_options(data_dir: Path) -> dict[str, object]:
             options[key] = int(options[key])
         except (TypeError, ValueError) as err:
             raise ValueError(f"{key} must be an integer") from err
+    options["log_level"] = str(options["log_level"]).strip().lower()
+    if options["verbose_logs"] and (
+        "log_level" not in raw or str(options["log_level"]).lower() == "info"
+    ):
+        options["log_level"] = "debug"
     return options
 
 
@@ -133,6 +143,12 @@ def validate(options: dict[str, object]) -> None:
         raise ValueError("mqtt_client_id contains unsupported characters")
     if not 1 <= int(options["ip_resolve_timeout_seconds"]) <= 60:
         raise ValueError("ip_resolve_timeout_seconds must be between 1 and 60")
+    if not 1 <= int(options["ip_discovery_broadcast_seconds"]) <= 10:
+        raise ValueError("ip_discovery_broadcast_seconds must be between 1 and 10")
+    if not 1 <= int(options["ip_discovery_max_unicast_per_second"]) <= 512:
+        raise ValueError(
+            "ip_discovery_max_unicast_per_second must be between 1 and 512"
+        )
     if not 1 <= int(options["ip_refresh_interval_minutes"]) <= 10080:
         raise ValueError("ip_refresh_interval_minutes must be between 1 and 10080")
     if not 5 <= int(options["ip_retry_backoff_seconds"]) <= 3600:
@@ -180,6 +196,17 @@ def validate(options: dict[str, object]) -> None:
         raise ValueError("camera_quality must be hd or sd")
     if options["ack_mode"] not in {"high", "contig", "hybrid"}:
         raise ValueError("ack_mode must be high, contig, or hybrid")
+    if options["log_level"] not in {
+        "critical",
+        "error",
+        "warning",
+        "info",
+        "debug",
+        "trace",
+    }:
+        raise ValueError(
+            "log_level must be critical, error, warning, info, debug, or trace"
+        )
     if not 0 <= int(options["hd_probe_wait_ms"]) <= 60000:
         raise ValueError("hd_probe_wait_ms must be between 0 and 60000")
     if not 5 <= int(options["camera_metadata_interval_seconds"]) <= 300:
@@ -413,18 +440,21 @@ def render_go2rtc(options: dict[str, object], data_dir: Path, template_dir: Path
         }
         if options["publish_camera_metadata"]:
             query["status_file"] = status_path
-        if options["verbose_logs"]:
+        if options["log_level"] in {"debug", "trace"}:
             query["verbose"] = "1"
+        if options["log_level"] == "trace":
+            query.update(
+                trace_packets="1", trace_ack="1", trace_frag="1", trace_frameinfo="1"
+            )
         if options["enable_debug_dumps"]:
             query["dump_c2d_plain"] = f"/data/petlibro_c2d_{stream_name}.dat"
             query["dump_d2c_plain"] = f"/data/petlibro_d2c_{stream_name}.dat"
         stream_url = f"petlibro://{ip_address}?{urlencode(query)}"
         streams.append(f"  {stream_name}: {yaml_string(stream_url)}")
 
-    level = "debug" if options["verbose_logs"] else "info"
     values = {
         "LOG_LEVEL": yaml_string("info"),
-        "PETLIBRO_LOG_LEVEL": yaml_string(level),
+        "PETLIBRO_LOG_LEVEL": yaml_string(options["log_level"]),
         "API_LISTEN": yaml_string(f":{options['go2rtc_api_port']}"),
         "RTSP_LISTEN": yaml_string(f":{options['go2rtc_rtsp_port']}"),
         "WEBRTC_LISTEN": yaml_string(f":{options['go2rtc_webrtc_port']}"),
@@ -486,8 +516,15 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
             "renderer_command": "/usr/local/bin/petlibro-render-config",
             "go2rtc_service": "/run/service/go2rtc",
             "ip_resolve_timeout_seconds": options["ip_resolve_timeout_seconds"],
+            "ip_discovery_broadcast_seconds": options[
+                "ip_discovery_broadcast_seconds"
+            ],
+            "ip_discovery_max_unicast_per_second": options[
+                "ip_discovery_max_unicast_per_second"
+            ],
             "ip_refresh_interval_minutes": options["ip_refresh_interval_minutes"],
             "ip_retry_backoff_seconds": options["ip_retry_backoff_seconds"],
+            "log_level": options["log_level"],
             "publish_discovery_ip": True,
         },
     )
@@ -524,6 +561,7 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
                     "camera_metadata_interval_seconds": options[
                         "camera_metadata_interval_seconds"
                     ],
+                    "log_level": options["log_level"],
                 },
             )
         )
@@ -558,6 +596,12 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
                 "/opt/petlibro-local/appdaemon/device_discovery.py",
             )
         ),
+        app_dir / "petlibro_logging.py": Path(
+            os.environ.get(
+                "PETLIBRO_LOGGING_SOURCE",
+                "/opt/petlibro-local/appdaemon/petlibro_logging.py",
+            )
+        ),
     }
     for link, target in links.items():
         if link.is_symlink() and link.readlink() == target:
@@ -567,9 +611,7 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
         link.symlink_to(target)
 
     marker = data_dir / ".verbose_logs"
-    if options["verbose_logs"]:
-        atomic_write(marker, "enabled\n")
-    elif marker.exists():
+    if marker.exists():
         marker.unlink()
     return appdaemon_changed or apps_changed
 

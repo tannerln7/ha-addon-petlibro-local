@@ -32,7 +32,9 @@ options:
   device_discovery: true
   product_filter: PLAF203
   lan_cidr: 192.168.1.0/24
-  ip_resolve_timeout_seconds: 10
+  ip_resolve_timeout_seconds: 15
+  ip_discovery_broadcast_seconds: 2
+  ip_discovery_max_unicast_per_second: 32
   ip_refresh_interval_minutes: 360
   ip_retry_backoff_seconds: 60
   devices: []
@@ -47,6 +49,7 @@ options:
   publish_camera_metadata: true
   camera_metadata_topic_prefix: ""
   camera_metadata_interval_seconds: 30
+  log_level: info
   verbose_logs: false
   enable_debug_dumps: false
 schema:
@@ -59,6 +62,8 @@ schema:
   product_filter: list(PLAF203)
   lan_cidr: str
   ip_resolve_timeout_seconds: int(1,60)
+  ip_discovery_broadcast_seconds: int(1,10)
+  ip_discovery_max_unicast_per_second: int(1,512)
   ip_refresh_interval_minutes: int(1,10080)
   ip_retry_backoff_seconds: int(5,3600)
   devices:
@@ -78,5 +83,6 @@ schema:
   publish_camera_metadata: bool
   camera_metadata_topic_prefix: str
   camera_metadata_interval_seconds: int(5,300)
+  log_level: list(critical|error|warning|info|debug|trace)
   verbose_logs: bool
   enable_debug_dumps: bool

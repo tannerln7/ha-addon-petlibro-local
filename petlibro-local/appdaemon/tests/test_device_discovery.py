@@ -3,12 +3,14 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 MODULE_PATH = ROOT / "src" / "device_discovery.py"
 SPEC = importlib.util.spec_from_file_location("device_discovery", MODULE_PATH)
 device_discovery = importlib.util.module_from_spec(SPEC)
@@ -122,8 +124,27 @@ def test_registry_is_atomic_private_and_excludes_credentials():
 
 
 def test_resolver_helper_json_is_validated():
+    stats = {
+        "broadcasts_sent": 1,
+        "unicasts_sent": 0,
+        "packets_received": 1,
+        "responses_rejected": 0,
+        "send_errors": 0,
+        "deadline_exceeded": False,
+    }
     success = subprocess.CompletedProcess(
-        [], 0, stdout='{"resolved":true,"ip_address":"192.0.2.100"}', stderr=""
+        [],
+        0,
+        stdout=json.dumps(
+            {
+                "resolved": True,
+                "ip_address": "192.0.2.100",
+                "method": "broadcast",
+                "elapsed_ms": 50,
+                "stats": stats,
+            }
+        ),
+        stderr="",
     )
     with patch.object(device_discovery.subprocess, "run", return_value=success) as run:
         result = device_discovery.resolve_uid(
@@ -137,20 +158,27 @@ def test_resolver_helper_json_is_validated():
 
     invalid = subprocess.CompletedProcess([], 1, stdout="not-json", stderr="")
     with patch.object(device_discovery.subprocess, "run", return_value=invalid):
-        try:
-            device_discovery.resolve_uid(
-                "/usr/local/bin/petlibro-resolve",
-                "PLAF20300000000ABCD0",
-                "192.0.2.0/24",
-                10,
-            )
-        except RuntimeError as error:
-            assert "invalid JSON" in str(error)
-        else:
-            raise AssertionError("invalid helper output was accepted")
+        result = device_discovery.resolve_uid(
+            "/usr/local/bin/petlibro-resolve",
+            "PLAF20300000000ABCD0",
+            "192.0.2.0/24",
+            10,
+        )
+    assert result["error_code"] == "invalid_helper_output"
 
     unresolved = subprocess.CompletedProcess(
-        [], 1, stdout='{"resolved":false,"method":"lan_search3"}', stderr=""
+        [],
+        1,
+        stdout=json.dumps(
+            {
+                "resolved": False,
+                "method": "not_found",
+                "elapsed_ms": 10000,
+                "error_code": "deadline_exceeded",
+                "stats": stats | {"deadline_exceeded": True},
+            }
+        ),
+        stderr="",
     )
     with patch.object(device_discovery.subprocess, "run", return_value=unresolved):
         result = device_discovery.resolve_uid(
@@ -160,6 +188,126 @@ def test_resolver_helper_json_is_validated():
             10,
         )
     assert result["resolved"] is False
+
+
+def test_resolver_timeout_is_classified_without_raising():
+    with patch.object(
+        device_discovery.subprocess,
+        "run",
+        side_effect=subprocess.TimeoutExpired(["petlibro-resolve"], 12),
+    ):
+        result = device_discovery.resolve_uid(
+            "/usr/local/bin/petlibro-resolve",
+            "PLAF20300000000ABCD0",
+            "192.0.2.0/24",
+            10,
+        )
+    assert result["error_code"] == "helper_timeout"
+    assert result["stats"]["deadline_exceeded"] is True
+
+
+def test_resolution_is_submitted_without_blocking_appdaemon_callback():
+    class Future:
+        def done(self):
+            return False
+
+        def cancel(self):
+            return False
+
+    class FakeAD:
+        def __init__(self):
+            self.submission = None
+
+        def submit_to_executor(self, func, *args, callback=None):
+            self.submission = (func, args, callback)
+            return Future()
+
+        def log(self, *_args, **_kwargs):
+            return None
+
+    coordinator = object.__new__(device_discovery.PetlibroDiscovery)
+    coordinator.ad = FakeAD()
+    coordinator.logger = device_discovery.PetlibroLogger(
+        coordinator.ad, "petlibro.discovery", "debug"
+    )
+    coordinator.registry = type(
+        "Registry",
+        (),
+        {
+            "devices": {
+                "PLAF203/EXAMPLE123": {"uid": "PLAF20300000000ABCD0"}
+            }
+        },
+    )()
+    coordinator.resolving = {"PLAF203/EXAMPLE123"}
+    coordinator.resolve_futures = set()
+    coordinator._resolve({"device_key": "PLAF203/EXAMPLE123"})
+    assert coordinator.ad.submission is not None
+    assert coordinator.resolving == {"PLAF203/EXAMPLE123"}
+    assert len(coordinator.resolve_futures) == 1
+
+
+def test_duplicate_resolution_attempt_is_not_scheduled():
+    calls = []
+    coordinator = object.__new__(device_discovery.PetlibroDiscovery)
+    coordinator.resolving = {"PLAF203/EXAMPLE123"}
+    coordinator.registry = type(
+        "Registry",
+        (),
+        {"devices": {"PLAF203/EXAMPLE123": {"uid": "PLAF20300000000ABCD0"}}},
+    )()
+    coordinator.ad = type("AD", (), {"run_in": lambda *_args, **_kwargs: calls.append(1)})()
+    coordinator._schedule_resolution("PLAF203/EXAMPLE123", force=True)
+    assert calls == []
+
+
+def test_resolution_completion_serializes_registry_update():
+    class FakeAD:
+        def log(self, *_args, **_kwargs):
+            return None
+
+    with tempfile.TemporaryDirectory() as temporary:
+        registry = device_discovery.DeviceRegistry(Path(temporary) / "devices.json")
+        key, device, _created = registry.observe(
+            "PLAF203", "EXAMPLE123", "dl/PLAF203/EXAMPLE123/device"
+        )
+        registry.set_uid(device, "PLAF20300000000ABCD0")
+        coordinator = object.__new__(device_discovery.PetlibroDiscovery)
+        coordinator.ad = FakeAD()
+        coordinator.logger = device_discovery.PetlibroLogger(
+            coordinator.ad, "petlibro.discovery", "debug"
+        )
+        coordinator.registry = registry
+        coordinator.resolving = {key}
+        coordinator.resolve_futures = set()
+        flushes = []
+        coordinator._schedule_flush = lambda *, config_dirty: flushes.append(
+            config_dirty
+        )
+        coordinator._resolve_complete(
+            {
+                "device_key": key,
+                "uid": "PLAF20300000000ABCD0",
+                "result": {
+                    "resolved": True,
+                    "ip_address": "192.0.2.100",
+                    "method": "broadcast",
+                    "elapsed_ms": 40,
+                    "stats": {
+                        "broadcasts_sent": 1,
+                        "unicasts_sent": 0,
+                        "packets_received": 1,
+                        "responses_rejected": 0,
+                        "send_errors": 0,
+                        "deadline_exceeded": False,
+                    },
+                },
+            }
+        )
+        assert registry.devices[key]["ip_address"] == "192.0.2.100"
+        assert registry.devices[key]["ready"]["ip_resolved"] is True
+        assert key not in coordinator.resolving
+        assert flushes == [True]
 
 
 def test_runtime_reloader_restarts_only_when_go2rtc_config_changes():

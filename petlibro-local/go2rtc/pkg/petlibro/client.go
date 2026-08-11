@@ -742,7 +742,7 @@ func (c *Client) send(p []byte) error {
 
 func (c *Client) dumpC2DInner(body []byte) {
 	if c.verbose && c.tracePackets {
-		log.Debug().Int("len", len(body)).Hex("plain", body).Msg("petlibro C2D inner")
+		log.Trace().Int("len", len(body)).Hex("plain", body).Msg("petlibro C2D inner")
 	}
 	if c.c2dPlainDump != nil {
 		record := make([]byte, 12+len(body))
