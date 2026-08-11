@@ -11,9 +11,11 @@ cd "${repo_root}"
     petlibro-local/render_config.py \
     petlibro-local/appdaemon/src/camera_metadata.py \
     petlibro-local/appdaemon/src/device_discovery.py \
+    petlibro-local/appdaemon/src/feeder_mqtt_validation.py \
     petlibro-local/appdaemon/src/plaf203.py \
     petlibro-local/appdaemon/tests/test_camera_metadata.py \
     petlibro-local/appdaemon/tests/test_device_discovery.py \
+    petlibro-local/appdaemon/tests/test_feeder_mqtt_validation.py \
     tests/test_render_config.py
 
 if "${python_bin}" -c 'import appdaemon' >/dev/null 2>&1; then

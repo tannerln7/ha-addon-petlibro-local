@@ -25,6 +25,7 @@ flowchart LR
     Status -->|Health and address refresh trigger| Discovery
     Status -->|Validated per-stream polling| Controller
     Controller <-->|Local PLAF203 MQTT protocol| Broker
+    Controller -.->|Explicit validated endpoint update only| Feeder
     Controller -->|Retained camera state and availability| Broker
     Broker <-->|Redirected plaintext MQTT| Feeder[PLAF203 feeder]
     Go2rtc <-->|LAN UDP/TUTK camera protocol| Feeder
@@ -45,6 +46,11 @@ The controller connects to the configured MQTT broker through AppDaemon's MQTT
 plugin. It responds to the feeder's PLAF203 protocol, publishes Home Assistant
 MQTT discovery entities, accepts commands through its own MQTT topics, and
 publishes the stable camera runtime contract for frontend integrations.
+Its broker connection settings are separate from the opt-in feeder endpoint
+persistence settings. Normal startup acknowledges the feeder without sending
+an endpoint sync. An explicitly enabled update is allowed only after the
+feeder-facing host resolves outside Home Assistant's internal networks and its
+MQTT port accepts a bounded TCP connection.
 
 ### Discovery coordinator
 

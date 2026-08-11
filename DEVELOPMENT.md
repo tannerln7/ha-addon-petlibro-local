@@ -104,13 +104,23 @@ PLAF203 discovery requires both LAN_SEARCH3 legs and KNOCK2; accept KNOCK_RR2
 only when its UID and nonce match. The AppDaemon coordinator uses
 `submit_to_executor` for the blocking subprocess. The executor worker returns
 data only, while the completion callback serializes registry, MQTT readiness,
-and config changes.
+and config changes. AppDaemon invokes that callback with the worker value as
+the keyword argument `result`; regression tests must exercise
+`callback(result=...)`. Keep the completion path guarded so malformed, stale,
+or exceptional results release only their matching opaque attempt token and
+cannot suppress later retries.
 
 `appdaemon/src/petlibro_logging.py` owns application log filtering and secret
 redaction. Do not start AppDaemon with global `-D DEBUG`: that exposes its
 high-frequency scheduler and state internals. Add bounded state summaries at
 `debug` and raw message or packet evidence at `trace`. Decrypted dump files
 remain controlled exclusively by `enable_debug_dumps`.
+
+`appdaemon/src/feeder_mqtt_validation.py` owns the safety gate for physical
+feeder endpoint persistence. Keep add-on broker connection settings separate
+from feeder-facing settings. Any new persistence path must preserve the
+default no-sync behavior and pass DNS answers through the address policy and
+bounded TCP reachability checks before sending `DEVICE_CONFIG_SYNC`.
 
 ## Updating imported components
 

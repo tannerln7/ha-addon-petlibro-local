@@ -73,13 +73,23 @@ class RenderConfigTests(unittest.TestCase):
         metadata = data_dir / "camera_metadata.py"
         discovery = data_dir / "device_discovery.py"
         logging_source = data_dir / "petlibro_logging.py"
-        for path in (source, metadata, discovery, logging_source):
+        feeder_mqtt_validation = data_dir / "feeder_mqtt_validation.py"
+        for path in (
+            source,
+            metadata,
+            discovery,
+            logging_source,
+            feeder_mqtt_validation,
+        ):
             path.write_text("# synthetic app source\n", encoding="utf-8")
         environment = {
             "PETLIBRO_APP_SOURCE": str(source),
             "PETLIBRO_CAMERA_METADATA_SOURCE": str(metadata),
             "PETLIBRO_DEVICE_DISCOVERY_SOURCE": str(discovery),
             "PETLIBRO_LOGGING_SOURCE": str(logging_source),
+            "PETLIBRO_FEEDER_MQTT_VALIDATION_SOURCE": str(
+                feeder_mqtt_validation
+            ),
         }
         go2rtc_changed = render_config.render_go2rtc(options, data_dir, TEMPLATES)
         with patch.dict(os.environ, environment):
@@ -111,6 +121,10 @@ class RenderConfigTests(unittest.TestCase):
             self.assertIn("dump_c2d_plain=%2Fdata%2Fpetlibro_c2d_petlibro_feeder.dat", go2rtc)
             self.assertIn("petlibro_discovery:", apps)
             self.assertIn("plaf203_example123:", apps)
+            self.assertIn('device_uid: "PLAF20300000000ABCD0"', apps)
+            self.assertIn("persist_feeder_mqtt: false", apps)
+            self.assertIn('feeder_mqtt_host: ""', apps)
+            self.assertNotIn("\n  mqtt_host:", apps)
             self.assertEqual(2, apps.count('petlibro_log_level: "info"'))
             self.assertNotIn("\n  log_level:", apps)
             self.assertIn('client_id: "petlibro_local_backend"', appdaemon)
@@ -185,6 +199,27 @@ class RenderConfigTests(unittest.TestCase):
             self.assertTrue(loaded["device_discovery"])
             self.assertEqual([], loaded["devices"])
             self.assertEqual("10.20.0.0/16", loaded["lan_cidr"])
+            self.assertFalse(loaded["persist_feeder_mqtt"])
+            self.assertEqual("", loaded["feeder_mqtt_host"])
+
+    def test_feeder_mqtt_persistence_requires_a_separate_destination(self):
+        options = self.options()
+        options["persist_feeder_mqtt"] = True
+        with self.assertRaisesRegex(ValueError, "feeder_mqtt_host is required"):
+            render_config.validate(options)
+
+        options["feeder_mqtt_host"] = "mqtt.example.test"
+        render_config.validate(options)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            options["devices"] = [self.manual_device()]
+            self.render_all(options, data_dir)
+            apps = (data_dir / "apps.yaml").read_text(encoding="utf-8")
+            self.assertIn("persist_feeder_mqtt: true", apps)
+            self.assertIn('feeder_mqtt_host: "mqtt.example.test"', apps)
+            self.assertIn("feeder_mqtt_port: 1883", apps)
+            self.assertNotIn('mqtt_host: "192.0.2.10"', apps)
 
     def test_log_level_validation_and_legacy_verbose_migration(self):
         with tempfile.TemporaryDirectory() as temporary:

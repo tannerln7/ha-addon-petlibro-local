@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import datetime
+import functools
+import hashlib
 import ipaddress
 import json
 import os
 import re
+import secrets
 import subprocess
 import tempfile
 from pathlib import Path
@@ -315,6 +318,51 @@ def _valid_resolver_result(result: object) -> bool:
     return isinstance(stats.get("deadline_exceeded"), bool)
 
 
+def _uid_digest(uid: str) -> str:
+    """Return a non-reversible identity marker for stale-result checks."""
+    return hashlib.sha256(uid.encode("utf-8")).hexdigest()
+
+
+def _sanitized_resolver_result(result: object) -> dict:
+    """Keep only validated operational data in the executor callback result."""
+    if not _valid_resolver_result(result):
+        return _resolver_failure(
+            "invalid_helper_output", "resolver result has an invalid schema"
+        )
+
+    assert isinstance(result, dict)
+    clean = {
+        "resolved": result["resolved"],
+        "method": result["method"],
+        "elapsed_ms": result["elapsed_ms"],
+        "stats": {
+            key: result["stats"][key]
+            for key in (
+                "lan_search_w3_1_sent",
+                "lan_search_w3_2_sent",
+                "knock2_sent",
+                "lan_search_r_received",
+                "knock_rr2_received",
+                "wrong_uid_rejected",
+                "nonce_mismatch_rejected",
+                "broadcasts_sent",
+                "unicasts_sent",
+                "packets_received",
+                "responses_rejected",
+                "send_errors",
+                "deadline_exceeded",
+            )
+        },
+    }
+    if result["resolved"]:
+        clean["ip_address"] = str(result.get("ip_address", ""))
+    else:
+        clean["error_code"] = str(
+            result.get("error_code", "invalid_helper_output")
+        )
+    return clean
+
+
 def resolve_uid(
     command: str,
     uid: str,
@@ -463,10 +511,25 @@ class PetlibroDiscovery(ADBase):
             "petlibro.discovery",
             self.args.get("petlibro_log_level", "info"),
         )
+        if bool(self.args.get("persist_feeder_mqtt", False)):
+            self.logger.info(
+                "Feeder MQTT persistence enabled; last configured feeder broker: "
+                "{}:{}".format(
+                    self.args.get("feeder_mqtt_host", ""),
+                    self.args.get("feeder_mqtt_port", 1883),
+                )
+            )
+        else:
+            self.logger.info(
+                "Feeder MQTT persistence disabled; preserving existing feeder MQTT config"
+            )
         self.flush_handle = None
         self.config_dirty = False
         self.resolving: set[str] = set()
+        self.resolve_attempts: dict[str, tuple[str, str]] = {}
         self.resolve_futures = set()
+        self.uid_warning_scheduled: set[str] = set()
+        self.uid_missing_warned: set[str] = set()
         self.publish_unavailable = False
         if self.enabled:
             self.mqtt.listen_event(
@@ -482,6 +545,9 @@ class PetlibroDiscovery(ADBase):
             namespace="mqtt",
         )
         self.timer = self.ad.run_every(self._periodic, "immediate", 30)
+        for key, device in self.registry.devices.items():
+            if not self._device_has_uid(device):
+                self._schedule_uid_missing_warning(key)
         self._publish_all()
 
     def terminate(self):
@@ -492,6 +558,8 @@ class PetlibroDiscovery(ADBase):
         for future in self.resolve_futures:
             future.cancel()
         self.resolve_futures.clear()
+        self.resolve_attempts.clear()
+        self.resolving.clear()
 
     def _mqtt_device_event(self, _event_name: str, data: dict, _kwargs) -> None:
         parsed = parse_device_topic(data.get("topic"), self.product_filter)
@@ -507,6 +575,9 @@ class PetlibroDiscovery(ADBase):
             self.logger.info("device discovered", product=product, serial=serial)
         if uid_changed:
             self.logger.info("camera UID discovered", product=product, serial=serial)
+            self.uid_missing_warned.discard(key)
+        elif created and uid is None:
+            self._schedule_uid_missing_warning(key)
         self._schedule_flush(config_dirty=created or uid_changed)
         if uid is not None:
             self._schedule_resolution(key, force=False)
@@ -604,29 +675,68 @@ class PetlibroDiscovery(ADBase):
         # _resolve only submits work and returns immediately.
         self.ad.run_in(self._resolve, 2, device_key=key)
 
+    @staticmethod
+    def _device_has_uid(device: dict) -> bool:
+        uid = device.get("uid")
+        return (
+            isinstance(uid, str)
+            and re.fullmatch(r"[A-Za-z0-9]{20}", uid) is not None
+        )
+
+    def _schedule_uid_missing_warning(self, key: str) -> None:
+        if key in self.uid_warning_scheduled or key in self.uid_missing_warned:
+            return
+        self.uid_warning_scheduled.add(key)
+        self.ad.run_in(self._warn_uid_missing, 60, device_key=key)
+
+    def _warn_uid_missing(self, kwargs: dict) -> None:
+        key = str(kwargs.get("device_key", ""))
+        self.uid_warning_scheduled.discard(key)
+        device = self.registry.devices.get(key)
+        if (
+            device is None
+            or self._device_has_uid(device)
+            or key in self.uid_missing_warned
+        ):
+            return
+        self.uid_missing_warned.add(key)
+        self.logger.warning(
+            "camera UID not observed; power-cycle the feeder after the add-on is subscribed",
+            product=device.get("product"),
+            serial=device.get("serial"),
+        )
+
     def _resolve(self, kwargs: dict) -> None:
         key = str(kwargs["device_key"])
         device = self.registry.devices.get(key)
-        if device is None:
+        if device is None or not self._device_has_uid(device):
             self.resolving.discard(key)
             return
         uid = str(device["uid"])
-        cached_ip = str(device.get("ip_address") or "") or None
-        candidates = tuple(self._known_candidate_ips(key))
+        attempt_token = secrets.token_hex(8)
+        attempt = (attempt_token, _uid_digest(uid))
+        self.resolve_attempts[key] = attempt
         try:
+            cached_ip = str(device.get("ip_address") or "") or None
+            candidates = tuple(self._known_candidate_ips(key))
             future = self.ad.submit_to_executor(
                 self._resolve_worker,
-                key,
                 uid,
                 cached_ip,
                 candidates,
-                callback=self._resolve_complete,
+                callback=functools.partial(
+                    self._resolve_complete,
+                    device_key=key,
+                    attempt_token=attempt_token,
+                ),
             )
         except Exception as err:
-            self.resolving.discard(key)
+            if self.resolve_attempts.get(key) == attempt:
+                self.resolve_attempts.pop(key, None)
+                self.resolving.discard(key)
             self.logger.error(
                 "resolver submission failed",
-                device=key,
+                attempt=attempt_token,
                 error_type=type(err).__name__,
             )
             self.registry.resolution_failed(device)
@@ -635,14 +745,13 @@ class PetlibroDiscovery(ADBase):
         self.resolve_futures.add(future)
         self.logger.debug(
             "resolver submitted",
-            device=key,
+            attempt=attempt_token,
             cached=bool(cached_ip),
             candidates=len(candidates),
         )
 
     def _resolve_worker(
         self,
-        key: str,
         uid: str,
         cached_ip: str | None,
         candidates: tuple[str, ...],
@@ -663,77 +772,118 @@ class PetlibroDiscovery(ADBase):
                 "invalid_helper_output",
                 f"resolver worker failed ({type(err).__name__})",
             )
-        return {"device_key": key, "uid": uid, "result": result}
+        return _sanitized_resolver_result(result)
 
-    def _resolve_complete(self, work: dict, **_kwargs) -> None:
-        self.resolve_futures = {
-            future for future in self.resolve_futures if not future.done()
-        }
-        key = str(work.get("device_key", ""))
-        attempted_uid = str(work.get("uid", ""))
-        result = work.get("result")
-        device = self.registry.devices.get(key)
-        self.resolving.discard(key)
-        if device is None or device.get("uid") != attempted_uid:
-            self.logger.debug("discarded stale resolver result", device=key)
-            return
+    def _resolve_complete(
+        self,
+        result: dict | None = None,
+        *,
+        device_key: str,
+        attempt_token: str,
+        **_kwargs,
+    ) -> None:
+        """Complete AppDaemon executor work delivered as callback(result=...)."""
+        key = device_key
+        expected_attempt = self.resolve_attempts.get(key)
+        try:
+            try:
+                self.resolve_futures = {
+                    future for future in self.resolve_futures if not future.done()
+                }
+            except Exception as err:
+                self.logger.debug(
+                    "resolver future cleanup deferred",
+                    attempt=attempt_token,
+                    error_type=type(err).__name__,
+                )
 
-        old_ip = device.get("ip_address")
-        stats = result.get("stats", {}) if isinstance(result, dict) else {}
-        resolved = isinstance(result, dict) and result.get("resolved") is True
-        if resolved:
-            changed = self.registry.resolution_succeeded(
-                device, str(result["ip_address"])
-            )
-            self.logger.info(
-                "IP resolved",
-                device=key,
-                ip_address=result.get("ip_address"),
-                method=result.get("method"),
-                elapsed_ms=result.get("elapsed_ms"),
-            )
-        else:
-            changed = False
-            self.registry.resolution_failed(device)
-            error_code = (
-                result.get("error_code", "invalid_helper_output")
-                if isinstance(result, dict)
-                else "invalid_helper_output"
-            )
-            log_method = (
-                self.logger.warning
-                if error_code in {"not_found", "deadline_exceeded", "helper_timeout"}
-                else self.logger.error
-            )
-            log_method(
-                "IP resolution failed",
-                device=key,
-                error_code=error_code,
-                elapsed_ms=result.get("elapsed_ms") if isinstance(result, dict) else None,
-            )
+            device = self.registry.devices.get(key)
+            if (
+                expected_attempt is None
+                or expected_attempt[0] != attempt_token
+                or device is None
+                or not self._device_has_uid(device)
+                or expected_attempt[1] != _uid_digest(str(device["uid"]))
+            ):
+                self.logger.debug(
+                    "discarded stale resolver result", attempt=attempt_token
+                )
+                return
 
-        self.logger.debug(
-            "resolver stats",
-            device=key,
-            method=result.get("method") if isinstance(result, dict) else None,
-            elapsed_ms=result.get("elapsed_ms") if isinstance(result, dict) else None,
-            lan_search_w3_1_sent=stats.get("lan_search_w3_1_sent"),
-            lan_search_w3_2_sent=stats.get("lan_search_w3_2_sent"),
-            knock2_sent=stats.get("knock2_sent"),
-            lan_search_r_received=stats.get("lan_search_r_received"),
-            knock_rr2_received=stats.get("knock_rr2_received"),
-            wrong_uid_rejected=stats.get("wrong_uid_rejected"),
-            nonce_mismatch_rejected=stats.get("nonce_mismatch_rejected"),
-            broadcasts=stats.get("broadcasts_sent"),
-            unicasts=stats.get("unicasts_sent"),
-            received=stats.get("packets_received"),
-            rejected=stats.get("responses_rejected"),
-            send_errors=stats.get("send_errors"),
-        )
-        self._schedule_flush(
-            config_dirty=changed
-            or (old_ip is None and device.get("ip_address") is not None)
-        )
+            clean_result = _sanitized_resolver_result(result)
+            old_ip = device.get("ip_address")
+            stats = clean_result["stats"]
+            if clean_result["resolved"]:
+                changed = self.registry.resolution_succeeded(
+                    device, str(clean_result["ip_address"])
+                )
+                self.logger.info(
+                    "IP resolved",
+                    ip_address=clean_result["ip_address"],
+                    method=clean_result["method"],
+                    elapsed_ms=clean_result["elapsed_ms"],
+                )
+            else:
+                changed = False
+                self.registry.resolution_failed(device)
+                error_code = clean_result["error_code"]
+                log_method = (
+                    self.logger.warning
+                    if error_code
+                    in {"not_found", "deadline_exceeded", "helper_timeout"}
+                    else self.logger.error
+                )
+                log_method(
+                    "IP resolution failed",
+                    attempt=attempt_token,
+                    error_code=error_code,
+                    elapsed_ms=clean_result["elapsed_ms"],
+                )
+
+            self.logger.debug(
+                "resolver stats",
+                attempt=attempt_token,
+                method=clean_result["method"],
+                elapsed_ms=clean_result["elapsed_ms"],
+                lan_search_w3_1_sent=stats["lan_search_w3_1_sent"],
+                lan_search_w3_2_sent=stats["lan_search_w3_2_sent"],
+                knock2_sent=stats["knock2_sent"],
+                lan_search_r_received=stats["lan_search_r_received"],
+                knock_rr2_received=stats["knock_rr2_received"],
+                wrong_uid_rejected=stats["wrong_uid_rejected"],
+                nonce_mismatch_rejected=stats["nonce_mismatch_rejected"],
+                broadcasts=stats["broadcasts_sent"],
+                unicasts=stats["unicasts_sent"],
+                received=stats["packets_received"],
+                rejected=stats["responses_rejected"],
+                send_errors=stats["send_errors"],
+                deadline_exceeded=stats["deadline_exceeded"],
+            )
+            self._schedule_flush(
+                config_dirty=changed
+                or (old_ip is None and device.get("ip_address") is not None)
+            )
+        except Exception as err:
+            device = self.registry.devices.get(key)
+            if device is not None:
+                try:
+                    self.registry.resolution_failed(device)
+                    self._schedule_flush(config_dirty=False)
+                except Exception:
+                    pass
+            self.logger.error(
+                "resolver completion failed",
+                attempt=attempt_token,
+                error_type=type(err).__name__,
+            )
+        finally:
+            if (
+                expected_attempt is not None
+                and expected_attempt[0] == attempt_token
+                and self.resolve_attempts.get(key) == expected_attempt
+            ):
+                self.resolve_attempts.pop(key, None)
+                self.resolving.discard(key)
 
     def _known_candidate_ips(self, current_key: str) -> list[str]:
         candidates = []

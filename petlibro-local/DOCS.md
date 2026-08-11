@@ -39,6 +39,11 @@ on Raspberry Pi-class and other low-resource installations.
 Normal setup does not require a serial, UID, or IP address. Start the backend,
 then reboot the feeder so the coordinator can observe `DEVICE_START_EVENT`.
 The generated stream appears after serial, UID, and LAN address discovery.
+If the feeder topic is observed without its non-retained startup UID, the
+add-on logs one request to power-cycle the feeder after the add-on is
+subscribed. Once learned, the registry UID is passed into dynamically rendered
+controllers so retained Home Assistant identity does not depend on the
+controller having observed the original startup event.
 The resolver checks the cached address first, starts its receiver before
 sending broadcast probes, tries other known Petlibro addresses, and scans the
 configured subnet at most once. Each target receives the firmware-required
@@ -55,16 +60,38 @@ and `device_ip` options are migrated into this registry when all three exist.
 
 | Option | Default | Description |
 |---|---|---|
-| `mqtt_host` | `core-mosquitto` | Broker hostname or address |
-| `mqtt_port` | `1883` | Broker TCP port |
+| `mqtt_host` | `core-mosquitto` | Broker hostname or address used by AppDaemon only |
+| `mqtt_port` | `1883` | Broker TCP port used by AppDaemon only |
 | `mqtt_username` | empty | AppDaemon's broker username |
 | `mqtt_password` | empty | AppDaemon's broker password; stored in a mode-0600 secrets file |
 | `mqtt_client_id` | `petlibro_local_backend` | Unique MQTT client ID for this backend instance |
+| `persist_feeder_mqtt` | `false` | Opt in to writing a validated broker destination to the physical feeder |
+| `feeder_mqtt_host` | empty | Stable LAN IP or multi-label DNS name reachable by the feeder |
+| `feeder_mqtt_port` | `1883` | Feeder-facing broker TCP port |
+| `feeder_https_addr` | empty | Optional HTTPS endpoint included only in an explicit feeder update |
 
 These credentials authenticate the backend to the broker. They do not provision
 the feeder or replace its factory-provisioned broker credentials. The feeder's
 own username and product-secret-based password must be configured as a separate
 account in the external broker.
+
+The first five MQTT options configure only AppDaemon's broker connection.
+`mqtt_host` is deliberately never reused as the physical feeder's destination.
+Normal installs leave `persist_feeder_mqtt` disabled, log that the existing
+feeder configuration is being preserved, and do not send `DEVICE_CONFIG_SYNC`
+at startup.
+
+Only enable persistence when intentionally migrating or recovering the
+feeder's stored broker address. Restart the add-on after saving the options,
+then reboot the feeder so it emits the startup event that gates the update. The
+add-on rejects single-label
+container names such as `core-mosquitto`, unsafe special-use addresses, known
+Home Assistant internal networks, DNS failures, and destinations with no
+reachable listener on `feeder_mqtt_port`. A failure blocks the device update
+but leaves discovery, control, and camera services running. When enabled and
+validated, the log records the configured destination, the send attempt, and
+the feeder's acknowledgement. Leave `feeder_https_addr` empty to omit that
+field from the update.
 
 ## Camera and go2rtc
 

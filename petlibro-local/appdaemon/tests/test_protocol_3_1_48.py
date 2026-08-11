@@ -60,12 +60,22 @@ class FakeAd:
     def __init__(self):
         self.logs = []
         self.errors = []
+        self.scheduled = []
+        self.cancelled = []
 
     def log(self, value):
         self.logs.append(value)
 
     def error(self, value):
         self.errors.append(value)
+
+    def run_in(self, callback, delay, **kwargs):
+        handle = f"timer-{len(self.scheduled) + 1}"
+        self.scheduled.append((handle, callback, delay, kwargs))
+        return handle
+
+    def cancel_timer(self, handle, silent):
+        self.cancelled.append((handle, silent))
 
 
 class FakeMqtt:
@@ -120,7 +130,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertEqual(0, fixed['nextDSTTransitionTs'])
         self.assertEqual(0, fixed['secondNextDSTTransitionTs'])
 
-    def test_boot_ack_precedes_config_sync_with_configurable_endpoints(self):
+    def test_boot_ack_preserves_existing_device_endpoints_by_default(self):
         calls = []
         fake_client = types.SimpleNamespace(
             device_start_event_send=lambda message: calls.append(('event', message.to_mqtt_payload())),
@@ -128,9 +138,31 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         )
         backend = p.Backend()
         backend.client = fake_client
-        backend.mqtt_host = 'local-broker'
-        backend.mqtt_port = 1883
-        backend.https_addr = 'local-api'
+        backend.persist_feeder_mqtt = False
+        backend.tutk_p2p_region = 'REGION_US'
+        backend.device_info_callback = None
+        backend.device_wifi_info_callback = None
+        backend._device_timestamp_sync_drift_check_and_adjust = lambda timestamp: None
+
+        boot = p.DeviceStartEventIn.from_mqtt_payload(BOOT_REQUEST['payload'])
+        backend._device_start_event_cb(boot)
+
+        self.assertEqual(['event'], [channel for channel, _ in calls])
+        self.assertEqual(boot.message_id.data, calls[0][1]['msgId'])
+
+    def test_boot_ack_precedes_explicit_feeder_mqtt_persistence(self):
+        calls = []
+        fake_client = types.SimpleNamespace(
+            device_start_event_send=lambda message: calls.append(('event', message.to_mqtt_payload())),
+            device_config_sync_send=lambda message: calls.append(('service', message.to_mqtt_payload())),
+        )
+        backend = p.Backend()
+        backend.client = fake_client
+        backend.logger = p.PetlibroLogger(self.ad, "petlibro.backend", "debug")
+        backend.persist_feeder_mqtt = True
+        backend.feeder_mqtt_host = 'mqtt.example.test'
+        backend.feeder_mqtt_port = 1883
+        backend.feeder_https_addr = 'api.example.test'
         backend.tutk_p2p_region = 'REGION_US'
         backend.device_info_callback = None
         backend.device_wifi_info_callback = None
@@ -141,8 +173,39 @@ class ProtocolCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(['event', 'service'], [channel for channel, _ in calls])
         self.assertEqual(boot.message_id.data, calls[0][1]['msgId'])
-        self.assertEqual([{'host': 'local-broker', 'port': 1883}], calls[1][1]['mqttAddr'])
-        self.assertEqual('local-api', calls[1][1]['httpsAddr'])
+        self.assertEqual([{'host': 'mqtt.example.test', 'port': 1883}], calls[1][1]['mqttAddr'])
+        self.assertEqual('api.example.test', calls[1][1]['httpsAddr'])
+
+    def test_device_config_sync_omits_unspecified_https_override(self):
+        payload = p.DeviceConfigSyncOut.create(
+            mqtt_addr=[p.MqttAddr('mqtt.example.test', 1883)],
+            https_addr=None,
+            tutk_p2p_region='REGION_US',
+        ).to_mqtt_payload()
+
+        self.assertNotIn('httpsAddr', payload)
+
+    def test_storage_uses_entity_exists_before_creating_first_install_state(self):
+        class StorageAD:
+            def __init__(self):
+                self.created = []
+
+            def set_namespace(self, _namespace):
+                return None
+
+            def entity_exists(self, name, **_kwargs):
+                return False
+
+            def get_state(self, *_args, **_kwargs):
+                raise AssertionError("get_state must not be used as an existence check")
+
+            def set_state(self, name, **kwargs):
+                self.created.append((name, kwargs["state"]))
+
+        ad = StorageAD()
+        storage = p.Storage(ad, 'plaf203', 'SERIAL')
+        storage.initialize()
+        self.assertEqual(2, len(ad.created))
 
     def _heartbeat_backend(self, food_plans):
         calls = []
@@ -156,6 +219,9 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             feeding_plan_service_send=lambda message: calls.append(
                 ('feeding_plan', message.to_mqtt_payload())
             ),
+            ntp_sync_send=lambda message: calls.append(
+                ('ntp_sync', message.to_mqtt_payload())
+            ),
         )
         backend = p.Backend()
         backend.ad = self.ad
@@ -168,6 +234,8 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         backend.went_online_callback = None
         backend.went_offline_callback = None
         backend.ntp_sync_status_callback = None
+        backend.ntp_sync_pending_message_id = None
+        backend.ntp_sync_timeout_handle = None
         backend.device_info_callback = None
         backend.device_wifi_info_callback = None
         backend.heartbeat_watchdog = types.SimpleNamespace(
@@ -175,7 +243,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         )
         return backend, calls
 
-    def test_heartbeat_drift_reports_heartbeat_timestamp_and_continues(self):
+    def test_initial_heartbeat_drift_starts_one_correction_without_false_failure(self):
         backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())
         statuses = []
         backend.ntp_sync_status_callback = statuses.append
@@ -190,13 +258,63 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         with patch.object(p.Timestamp, 'now', return_value=now):
             backend._heartbeat_cb(heartbeat)
 
-        self.assertEqual([False], statuses)
+        self.assertEqual([], statuses)
         self.assertEqual([], self.ad.errors)
-        self.assertTrue(
+        self.assertFalse(
             any("device NTP synchronization failed" in message for message in self.ad.logs)
         )
+        self.assertEqual(1, len([name for name, _payload in calls if name == 'ntp_sync']))
+        backend._device_timestamp_sync_drift_check_and_adjust(heartbeat_timestamp)
+        self.assertEqual(1, len([name for name, _payload in calls if name == 'ntp_sync']))
         self.assertTrue(backend.is_online)
         self.assertIn(('watchdog_reset', None), calls)
+
+    def test_ntp_correction_reports_failure_only_after_bad_ack_or_timeout(self):
+        backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())
+        statuses = []
+        backend.ntp_sync_status_callback = statuses.append
+        stale = p.Timestamp(datetime.datetime(2020, 1, 2, tzinfo=datetime.timezone.utc))
+        now = p.Timestamp(datetime.datetime(2026, 8, 11, tzinfo=datetime.timezone.utc))
+
+        with patch.object(p.Timestamp, 'now', return_value=now):
+            self.assertTrue(backend._request_ntp_sync())
+            message_id = backend.ntp_sync_pending_message_id
+            backend._ntp_sync_cb(
+                p.NtpSyncIn(p.MessageId(message_id), stale, p.Code.OK)
+            )
+
+        self.assertEqual([False], statuses)
+        self.assertIsNone(backend.ntp_sync_pending_message_id)
+        self.assertTrue(
+            any("phase=acknowledgement" in message for message in self.ad.logs)
+        )
+
+        statuses.clear()
+        with patch.object(p.Timestamp, 'now', return_value=now):
+            self.assertTrue(backend._request_ntp_sync())
+        message_id = backend.ntp_sync_pending_message_id
+        backend._ntp_sync_timeout({"message_id": message_id})
+        self.assertEqual([False], statuses)
+        self.assertTrue(any("phase=timeout" in message for message in self.ad.logs))
+
+    def test_heartbeat_offline_online_transitions_are_idempotent(self):
+        backend, _calls = self._heartbeat_backend(p.FoodPlans.create_empty())
+        online = []
+        offline = []
+        backend.went_online_callback = lambda: online.append(True)
+        backend.went_offline_callback = lambda: offline.append(True)
+
+        backend._heartbeat_cb(
+            p.HeartbeatIn(p.Timestamp.now(), 5, -50, p.WifiType.TYPE_0)
+        )
+        backend._heartbeat_watchdog_trigger()
+        backend._heartbeat_watchdog_trigger()
+        backend._heartbeat_cb(
+            p.HeartbeatIn(p.Timestamp.now(), 1, -50, p.WifiType.TYPE_0)
+        )
+
+        self.assertEqual([True, True], online)
+        self.assertEqual([True], offline)
 
     def test_first_heartbeat_does_not_push_unconfigured_empty_plan(self):
         backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())

@@ -29,6 +29,10 @@ options:
   mqtt_username: ""
   mqtt_password: ""
   mqtt_client_id: petlibro_local_backend
+  persist_feeder_mqtt: false
+  feeder_mqtt_host: ""
+  feeder_mqtt_port: 1883
+  feeder_https_addr: ""
   device_discovery: true
   product_filter: PLAF203
   lan_cidr: 192.168.1.0/24
@@ -58,6 +62,10 @@ schema:
   mqtt_username: str
   mqtt_password: password
   mqtt_client_id: str
+  persist_feeder_mqtt: bool
+  feeder_mqtt_host: str
+  feeder_mqtt_port: port
+  feeder_https_addr: str
   device_discovery: bool
   product_filter: list(PLAF203)
   lan_cidr: str

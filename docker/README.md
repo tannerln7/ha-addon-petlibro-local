@@ -33,6 +33,14 @@ feeder uses its own factory/device MQTT account, which must be provisioned in
 the external broker separately; this backend does not accept or configure the
 feeder's product secret.
 
+`MQTT_HOST` is likewise only AppDaemon's connection address. Keep
+`PERSIST_FEEDER_MQTT=0` for normal operation. If intentionally migrating the
+physical feeder to a durable local broker address, use the separate
+`FEEDER_MQTT_HOST` and `FEEDER_MQTT_PORT` values, restart the container, then
+reboot the feeder. The preflight
+rejects container-only names and addresses and requires a reachable TCP
+listener before the controller can send an endpoint update.
+
 Start the container before rebooting the feeder so it can observe the
 `DEVICE_START_EVENT` UID. Advanced installations can set `DEVICES_JSON` to a
 JSON array of manual device overrides; leave it as `[]` for normal setup.

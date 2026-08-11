@@ -6,6 +6,7 @@ import appdaemon.plugins.hass.hassapi as hassapi
 import appdaemon.plugins.mqtt.mqttapi as mqttapi
 
 from camera_metadata import CameraMetadataPublisher
+from feeder_mqtt_validation import validate_feeder_mqtt_destination
 from petlibro_logging import PetlibroLogger
 
 from dataclasses import dataclass
@@ -768,8 +769,8 @@ class MqttAddr:
 class DeviceConfigSyncOut:
     message_id: MessageId
     timestamp: Timestamp
-    mqtt_addr: [MqttAddr]
-    https_addr: str
+    mqtt_addr: list[MqttAddr]
+    https_addr: Optional[str]
     tutk_p2p_region: str
 
     @staticmethod
@@ -789,14 +790,16 @@ class DeviceConfigSyncOut:
                 'port': addr.port
             })
 
-        return {
+        payload = {
             'cmd': Commands.DEVICE_CONFIG_SYNC,
             'msgId': self.message_id.data,
             'ts': self.timestamp.to_timestamp_epoch_ms(),
             'mqttAddr': mqtt_addrs,
-            'httpsAddr': self.https_addr,
             'tutkP2pRegion': self.tutk_p2p_region,
         }
+        if self.https_addr:
+            payload['httpsAddr'] = self.https_addr
+        return payload
 
 
 @dataclass
@@ -3036,11 +3039,25 @@ class Backend:
     HEARTBEAT_WATCHDOG_PERIOD_SEC: int = 51 + 30
     DEVICE_INIT_WATCHDOG_PERIOD_SEC: int = 10
     NTP_SYNC_TIME_DIFF_THRESHOLD_SEC: int = 10
+    NTP_SYNC_ACK_TIMEOUT_SEC: int = 10
 
-    def initialize(self, ad: adapi.ADAPI, mqtt: mqttapi.Mqtt, device_serial: str, mqtt_host: str, mqtt_port: int, food_plans: FoodPlans, https_addr: Optional[str] = None, tutk_p2p_region: str = 'REGION_US', log_level: str = "info"):
-        self.mqtt_host: str = mqtt_host
-        self.mqtt_port: int = mqtt_port
-        self.https_addr: str = https_addr if https_addr is not None else mqtt_host
+    def initialize(
+        self,
+        ad: adapi.ADAPI,
+        mqtt: mqttapi.Mqtt,
+        device_serial: str,
+        food_plans: FoodPlans,
+        persist_feeder_mqtt: bool = False,
+        feeder_mqtt_host: str = '',
+        feeder_mqtt_port: int = 1883,
+        feeder_https_addr: Optional[str] = None,
+        tutk_p2p_region: str = 'REGION_US',
+        log_level: str = "info",
+    ):
+        self.persist_feeder_mqtt: bool = persist_feeder_mqtt
+        self.feeder_mqtt_host: str = feeder_mqtt_host
+        self.feeder_mqtt_port: int = feeder_mqtt_port
+        self.feeder_https_addr: Optional[str] = feeder_https_addr or None
         self.tutk_p2p_region: str = tutk_p2p_region
 
         self.food_plans: FoodPlans = food_plans
@@ -3112,7 +3129,8 @@ class Backend:
 
         self.last_heartbeat_count: int = 0
         self.is_online: bool = False
-        self.ntp_sync_error: bool = False
+        self.ntp_sync_pending_message_id: Optional[str] = None
+        self.ntp_sync_timeout_handle = None
 
         # Hack:
         # These are actually stored on the device but the device
@@ -3317,10 +3335,11 @@ class Backend:
         # Check if device restarted which might have not been detected by the watchdog
         # between two heartbeat messages
         if heartbeat_in.count < self.last_heartbeat_count:
-            self.is_online == False
-
-            if not self.went_offline_callback == None:
-                self.went_offline_callback()
+            if self.is_online:
+                self.is_online = False
+                if not self.went_offline_callback == None:
+                    self.went_offline_callback()
+            self._clear_ntp_sync_pending()
 
         self.last_heartbeat_count = heartbeat_in.count
 
@@ -3358,16 +3377,17 @@ class Backend:
 
             # Force NTP sync because we don't know when that happened the last time to ensure that
             # the feeding plans are executed correctly
-            timestamp_now = Timestamp.now()
-
-            if not self._device_timestamp_sync_drift_check(timestamp_now, heartbeat_in.timestamp):
-                self.logger.error("device NTP synchronization failed", phase="heartbeat")
-
-                if not self.ntp_sync_status_callback == None:
-                    self.ntp_sync_status_callback(False)
-            else:
+            if self._device_timestamp_sync_drift_check(
+                Timestamp.now(), heartbeat_in.timestamp
+            ):
                 if not self.ntp_sync_status_callback == None:
                     self.ntp_sync_status_callback(True)
+            else:
+                self.logger.debug(
+                    "device NTP drift detected; correction in progress",
+                    phase="heartbeat",
+                )
+                self._request_ntp_sync()
         else:
             # With every heartbeat, re-sync the device state
             # Somewhat duct-taping inconsistent state issues
@@ -3404,10 +3424,24 @@ class Backend:
             self.ntp_sync_status_callback(True)
 
     def _ntp_sync_cb(self, ntp_sync_in: NtpSyncIn):
+        pending_message_id = self.ntp_sync_pending_message_id
+        if (
+            pending_message_id is None
+            or ntp_sync_in.message_id.data != pending_message_id
+        ):
+            self.logger.debug("ignored stale NTP synchronization acknowledgement")
+            return
+
+        self._clear_ntp_sync_pending()
         timestamp_now = Timestamp.now()
 
         # Basically just an ack from the device, but check again that drift is actually fine
-        if not self._device_timestamp_sync_drift_check(timestamp_now, ntp_sync_in.timestamp):
+        if (
+            ntp_sync_in.code != Code.OK
+            or not self._device_timestamp_sync_drift_check(
+                timestamp_now, ntp_sync_in.timestamp
+            )
+        ):
             self.logger.error("device NTP synchronization failed", phase="acknowledgement")
 
             if not self.ntp_sync_status_callback == None:
@@ -3436,12 +3470,22 @@ class Backend:
         )
         self.client.device_start_event_send(device_start_event_out)
 
-        device_config_sync_out = DeviceConfigSyncOut.create(
-            mqtt_addr = [MqttAddr(self.mqtt_host, self.mqtt_port)],
-            https_addr = self.https_addr,
-            tutk_p2p_region = self.tutk_p2p_region,
-        )
-        self.client.device_config_sync_send(device_config_sync_out)
+        if self.persist_feeder_mqtt:
+            device_config_sync_out = DeviceConfigSyncOut.create(
+                mqtt_addr = [
+                    MqttAddr(self.feeder_mqtt_host, self.feeder_mqtt_port)
+                ],
+                https_addr = self.feeder_https_addr,
+                tutk_p2p_region = self.tutk_p2p_region,
+            )
+            self.client.device_config_sync_send(device_config_sync_out)
+            self.logger.info(
+                "feeder MQTT persistence request sent",
+                broker="{}:{}".format(
+                    self.feeder_mqtt_host, self.feeder_mqtt_port
+                ),
+                https_override=bool(self.feeder_https_addr),
+            )
 
         self._device_timestamp_sync_drift_check_and_adjust(device_start_event.timestamp)
 
@@ -3781,6 +3825,14 @@ class Backend:
             self._error_report("Configuring device endpoints failed")
             return
 
+        if self.persist_feeder_mqtt:
+            self.logger.info(
+                "feeder MQTT persistence acknowledged",
+                broker="{}:{}".format(
+                    self.feeder_mqtt_host, self.feeder_mqtt_port
+                ),
+            )
+
         self._device_timestamp_sync_drift_check_and_adjust(device_config_sync_in.timestamp)
 
     def _grain_output_event_cb(self, grain_output_event_in: GrainOutputEventIn):
@@ -3816,10 +3868,10 @@ class Backend:
     ##########################################
 
     def _heartbeat_watchdog_trigger(self):
-        self.is_online = False
-
-        if not self.went_offline_callback == None:
-            self.went_offline_callback()
+        if self.is_online:
+            self.is_online = False
+            if not self.went_offline_callback == None:
+                self.went_offline_callback()
 
     def _device_timestamp_sync_drift_check_and_adjust(self, timestamp_device: Timestamp):
         timestamp_now = Timestamp.now()
@@ -3827,8 +3879,50 @@ class Backend:
         if not self._device_timestamp_sync_drift_check(timestamp_now, timestamp_device):
             self.logger.debug("device time drift detected; forcing NTP sync")
 
-            ntp_sync_out = NtpSyncOut.create()
+            self._request_ntp_sync()
+
+    def _request_ntp_sync(self) -> bool:
+        if self.ntp_sync_pending_message_id is not None:
+            self.logger.debug("device NTP correction already in progress")
+            return False
+
+        ntp_sync_out = NtpSyncOut.create()
+        self.ntp_sync_pending_message_id = ntp_sync_out.message_id.data
+        try:
             self.client.ntp_sync_send(ntp_sync_out)
+            self.ntp_sync_timeout_handle = self.ad.run_in(
+                self._ntp_sync_timeout,
+                self.NTP_SYNC_ACK_TIMEOUT_SEC,
+                message_id=ntp_sync_out.message_id.data,
+            )
+        except Exception as err:
+            self.ntp_sync_pending_message_id = None
+            self.ntp_sync_timeout_handle = None
+            self.logger.warning(
+                "device NTP correction could not be requested",
+                phase="request",
+                error_type=type(err).__name__,
+            )
+            if not self.ntp_sync_status_callback == None:
+                self.ntp_sync_status_callback(False)
+            return False
+        return True
+
+    def _ntp_sync_timeout(self, kwargs: dict):
+        message_id = str(kwargs.get("message_id", ""))
+        if message_id != self.ntp_sync_pending_message_id:
+            return
+        self.ntp_sync_pending_message_id = None
+        self.ntp_sync_timeout_handle = None
+        self.logger.error("device NTP synchronization failed", phase="timeout")
+        if not self.ntp_sync_status_callback == None:
+            self.ntp_sync_status_callback(False)
+
+    def _clear_ntp_sync_pending(self):
+        self.ntp_sync_pending_message_id = None
+        if self.ntp_sync_timeout_handle is not None:
+            self.ad.cancel_timer(self.ntp_sync_timeout_handle, True)
+            self.ntp_sync_timeout_handle = None
 
     def _device_timestamp_sync_drift_check(self, timestamp_backend: Timestamp, timestamp_device: Timestamp) -> bool:
         delta = timestamp_backend.abs_delta(timestamp_device)
@@ -4229,7 +4323,7 @@ class Storage:
         self._entity_state_dict_set(self.food_plans_entity_id, food_plans.to_dict())
 
     def _entity_state_exists(self, name: str) -> bool:
-        return not self.ad.get_state(name, namespace = 'plaf203') == None
+        return self.ad.entity_exists(name, namespace = 'plaf203')
 
     def _entity_state_dict_get(self, name: str) -> dict:
         json_str = self.ad.get_state(name, namespace = 'plaf203')
@@ -4255,16 +4349,39 @@ class Storage:
 
 class Plaf203(adbase.ADBase):
     def initialize(self):
-        mqtt_host: str = self.args['mqtt_host']
-        mqtt_port: int = int(self.args['mqtt_port'])
-        https_addr: str = self.args.get('https_addr', mqtt_host)
+        persist_feeder_mqtt = bool(self.args.get('persist_feeder_mqtt', False))
+        feeder_mqtt_host = str(self.args.get('feeder_mqtt_host', '')).strip()
+        feeder_mqtt_port = int(self.args.get('feeder_mqtt_port', 1883))
+        feeder_https_addr = (
+            str(self.args.get('feeder_https_addr', '')).strip() or None
+        )
         tutk_p2p_region: str = self.args.get('tutk_p2p_region', 'REGION_US')
         self.serial_number: str = self.args['serial_number']
+        configured_device_uid = str(self.args.get('device_uid', '')).strip()
 
         self.ad: adapi.ADAPI = self.get_ad_api()
         self.mqtt: mqttapi.Mqtt = self.get_plugin_api("MQTT")
         log_level = self.args.get('petlibro_log_level', 'info')
         self.logger = PetlibroLogger(self.ad, "petlibro.controller", log_level)
+
+        if persist_feeder_mqtt:
+            try:
+                feeder_mqtt_host, resolved_addresses = validate_feeder_mqtt_destination(
+                    feeder_mqtt_host,
+                    feeder_mqtt_port,
+                )
+            except ValueError as err:
+                persist_feeder_mqtt = False
+                self.logger.error(
+                    "feeder MQTT persistence blocked by validation",
+                    reason=str(err),
+                )
+            else:
+                self.logger.info(
+                    "feeder MQTT persistence destination validated",
+                    broker="{}:{}".format(feeder_mqtt_host, feeder_mqtt_port),
+                    resolved_addresses=list(resolved_addresses),
+                )
 
         self.camera_metadata = CameraMetadataPublisher(
             self.ad,
@@ -4296,10 +4413,11 @@ class Plaf203(adbase.ADBase):
             self.ad,
             self.mqtt,
             self.serial_number,
-            mqtt_host,
-            mqtt_port,
             self.storage.food_plans_get(),
-            https_addr = https_addr,
+            persist_feeder_mqtt = persist_feeder_mqtt,
+            feeder_mqtt_host = feeder_mqtt_host,
+            feeder_mqtt_port = feeder_mqtt_port,
+            feeder_https_addr = feeder_https_addr,
             tutk_p2p_region = tutk_p2p_region,
             log_level=log_level)
 
@@ -4307,6 +4425,11 @@ class Plaf203(adbase.ADBase):
 
         self.hass_discovery = HomeAssistantDiscoveryMqtt(self.mqtt, self.serial_number)
         self.hass_discovery.discovery_issue()
+        if len(configured_device_uid) == 20 and configured_device_uid.isalnum():
+            # The discovery coordinator may have observed DEVICE_START_EVENT
+            # before this dynamic controller existed. Re-publish that retained
+            # identity without waiting for another feeder reboot.
+            self._device_uuid_set(configured_device_uid)
 
         # When restarting, always flag the device offline initially
         # This ensures the integration waits for an actual life signal by the device

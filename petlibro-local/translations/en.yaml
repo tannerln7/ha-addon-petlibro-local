@@ -14,6 +14,18 @@ configuration:
   mqtt_client_id:
     name: MQTT client ID
     description: Unique broker client ID for this backend instance.
+  persist_feeder_mqtt:
+    name: Persist feeder MQTT destination
+    description: Explicitly write the feeder-facing broker address to the physical feeder after validation. Leave disabled to preserve its existing endpoint configuration.
+  feeder_mqtt_host:
+    name: Feeder MQTT host
+    description: LAN-routable FQDN or address written to the physical feeder only when persistence is enabled. Never use a Home Assistant internal hostname.
+  feeder_mqtt_port:
+    name: Feeder MQTT port
+    description: LAN broker port written to the physical feeder when persistence is enabled.
+  feeder_https_addr:
+    name: Feeder HTTPS address
+    description: Optional HTTPS endpoint written with the feeder MQTT destination. Leave empty to omit it from the update.
   device_discovery:
     name: Device discovery
     description: Discover feeder serials and camera UIDs from MQTT, then resolve camera addresses on the LAN.

@@ -6,14 +6,19 @@ plaf203:
   # The feeder's DL_DEVICE_ID. Keep the real value in your untracked apps.yaml.
   serial_number: '00000000000000000'
 
-  # Address and port of the MQTT broker that receives the feeder's redirected
-  # Petlibro MQTT traffic. mqtt_port may be written as a number or string.
-  mqtt_host: '127.0.0.1'
-  mqtt_port: 1883
+  # Optional camera UID seed. The bundled discovery coordinator renders this
+  # automatically after it observes DEVICE_START_EVENT.
+  device_uid: ''
 
-  # Optional firmware 3.1.48+ startup values. https_addr defaults to mqtt_host,
-  # and tutk_p2p_region defaults to REGION_US when omitted.
-  https_addr: '127.0.0.1'
+  # Preserve the feeder's stored endpoints by default. To intentionally migrate
+  # them, enable this and supply a stable LAN address that resolves and accepts
+  # MQTT connections from the AppDaemon host. Never use a container-only name.
+  persist_feeder_mqtt: false
+  feeder_mqtt_host: ''
+  feeder_mqtt_port: 1883
+  feeder_https_addr: ''
+
+  # Firmware 3.1.48+ region used only by an enabled endpoint update.
   tutk_p2p_region: 'REGION_US'
 
   # Petlibro-specific filtering. Do not use AppDaemon's reserved log_level key;

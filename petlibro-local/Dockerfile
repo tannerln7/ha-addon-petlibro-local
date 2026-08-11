@@ -33,6 +33,7 @@ COPY appdaemon/src/plaf203.py /opt/petlibro-local/appdaemon/plaf203.py
 COPY appdaemon/src/camera_metadata.py /opt/petlibro-local/appdaemon/camera_metadata.py
 COPY appdaemon/src/device_discovery.py /opt/petlibro-local/appdaemon/device_discovery.py
 COPY appdaemon/src/petlibro_logging.py /opt/petlibro-local/appdaemon/petlibro_logging.py
+COPY appdaemon/src/feeder_mqtt_validation.py /opt/petlibro-local/appdaemon/feeder_mqtt_validation.py
 COPY templates/ /opt/petlibro-local/templates/
 COPY render_config.py /usr/local/bin/petlibro-render-config
 COPY run.sh /usr/local/bin/petlibro-local-run

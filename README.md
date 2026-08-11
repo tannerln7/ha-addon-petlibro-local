@@ -83,6 +83,13 @@ and it must authenticate both the backend identity configured here and the
 physical feeder's separately provisioned identity. See the
 [add-on option reference](petlibro-local/DOCS.md) for every setting.
 
+`mqtt_host` is only the address used by AppDaemon inside the add-on. It is not
+written to the feeder. Feeder endpoint persistence is disabled by default so a
+Home Assistant-only hostname cannot strand the physical device. The advanced
+`persist_feeder_mqtt` option requires a separate, validated LAN destination;
+see [configuration](docs/configuration.md#feeder-mqtt-endpoint-persistence)
+before enabling it.
+
 The complete first-run sequence is:
 
 1. Install and configure the MQTT broker, including the physical feeder's own

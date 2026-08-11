@@ -75,7 +75,9 @@ petlibro_local/PLAF203/YOUR_DEVICE_SERIAL/discovery/state
   `dl/PLAF203/<serial>/device/`.
 - `uid_discovered: false`: keep the backend running and reboot the feeder. The
   startup event is not assumed to be retained, so a reboot performed before
-  the backend subscribed may need to be repeated.
+  the backend subscribed may need to be repeated. The add-on emits this same
+  power-cycle guidance once after a topic-discovered feeder remains without a
+  startup UID; it is not repeated on every heartbeat.
 - `ip_resolved: false`: confirm `lan_cidr`, host networking, UDP reachability,
   and that the feeder is on the same routed LAN.
 - `stream_configured: false`: both a valid UID and resolved address are needed.
@@ -91,6 +93,10 @@ send errors, and final error code. `deadline_exceeded` means the bounded lookup
 finished normally without a match. `helper_timeout` means the child resolver
 failed to honor its deadline and the Python safety guard terminated it; this
 is an implementation failure rather than proof that the feeder is offline.
+Resolver completions use an opaque attempt marker and always release the
+in-progress guard for success, failure, malformed output, callback errors, and
+stale identity results. A failed attempt therefore cannot permanently suppress
+the configured retry or a manual refresh.
 
 ## Initial 640x360 stream before HD
 
@@ -146,6 +152,23 @@ credentials. The feeder identity is separate from the backend identity and must
 already exist in the broker. Those network prerequisites must be completed
 separately.
 
+Normal startup logs `Feeder MQTT persistence disabled; preserving existing
+feeder MQTT config`. If the feeder unexpectedly queries an internal name such
+as `core-mosquitto`, that value may have been persisted by an older backend
+version. Restore temporary DNS reachability first, then configure a durable LAN
+IP or multi-label DNS name under `feeder_mqtt_host`, enable
+`persist_feeder_mqtt`, restart the add-on, then reboot the feeder. Wait for the
+validation, send-attempt, and acknowledgement log lines before removing the
+temporary DNS record.
+
+If validation is blocked, the reason is included without sending
+`DEVICE_CONFIG_SYNC`. Confirm that the name resolves from the add-on to a
+feeder-routable address and that the configured MQTT port accepts TCP
+connections. `core-mosquitto`, single-label names, loopback/link-local/
+multicast/unspecified addresses, and known Home Assistant internal container
+networks are intentionally rejected. After a successful migration, disable
+`persist_feeder_mqtt` again to return to preserve-only startup behavior.
+
 ## Camera metadata is offline or missing
 
 Camera producers start lazily. Open the configured RTSP or WebRTC stream before
@@ -163,6 +186,10 @@ metadata warning and confirm
 missing file means go2rtc has not started a producer or could not write status.
 A malformed file publishes `status: error`; a file older than three configured
 heartbeat intervals publishes `status: offline`.
+
+Before a stream has ever been opened, a missing status file is an informational
+startup condition. It becomes a warning if status disappears after a working
+producer was previously observed.
 
 Do not point frontend integrations at the file. Use the documented
 [MQTT camera contract](mqtt-camera-contract.md).

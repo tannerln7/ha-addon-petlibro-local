@@ -7,6 +7,9 @@ This experimental Home Assistant app/add-on runs two local PLAF203 services:
 
 It does not provision an MQTT broker or the physical feeder's broker account.
 The configured MQTT username and password authenticate this backend only.
+The add-on also leaves the feeder's stored MQTT and HTTPS endpoints unchanged
+unless `persist_feeder_mqtt` is explicitly enabled with a separate validated
+LAN broker address. Never use `core-mosquitto` as that feeder-facing address.
 
 Normal Home Assistant installations pull the prebuilt amd64 image from
 `ghcr.io/tannerln7/ha-addon-petlibro-local`. They do not compile the patched

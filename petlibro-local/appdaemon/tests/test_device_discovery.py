@@ -1,4 +1,5 @@
 import datetime
+import copy
 import importlib.util
 import json
 import os
@@ -10,12 +11,44 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
+ADDON_ROOT = ROOT.parent
 sys.path.insert(0, str(ROOT / "src"))
 MODULE_PATH = ROOT / "src" / "device_discovery.py"
 SPEC = importlib.util.spec_from_file_location("device_discovery", MODULE_PATH)
 device_discovery = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(device_discovery)
+RENDER_SPEC = importlib.util.spec_from_file_location(
+    "render_config_for_discovery_test", ADDON_ROOT / "render_config.py"
+)
+render_config = importlib.util.module_from_spec(RENDER_SPEC)
+assert RENDER_SPEC.loader is not None
+RENDER_SPEC.loader.exec_module(render_config)
+TEMPLATES = ADDON_ROOT / "templates"
+
+
+def resolver_success(ip_address="192.0.2.100"):
+    return {
+        "resolved": True,
+        "ip_address": ip_address,
+        "method": "broadcast",
+        "elapsed_ms": 40,
+        "stats": {
+            "lan_search_w3_1_sent": 1,
+            "lan_search_w3_2_sent": 1,
+            "knock2_sent": 1,
+            "lan_search_r_received": 0,
+            "knock_rr2_received": 1,
+            "wrong_uid_rejected": 0,
+            "nonce_mismatch_rejected": 0,
+            "broadcasts_sent": 1,
+            "unicasts_sent": 0,
+            "packets_received": 1,
+            "responses_rejected": 0,
+            "send_errors": 0,
+            "deadline_exceeded": False,
+        },
+    }
 
 
 def fixed_now():
@@ -53,6 +86,12 @@ def test_stream_name_sanitization_is_stable_and_safe():
 
 def test_discovery_registers_mqtt_device_filter_as_wildcard():
     class FakeAD:
+        def __init__(self):
+            self.logs = []
+
+        def log(self, *_args, **_kwargs):
+            self.logs.append(_args[0])
+
         def run_every(self, *_args, **_kwargs):
             return "timer"
 
@@ -88,6 +127,11 @@ def test_discovery_registers_mqtt_device_filter_as_wildcard():
     assert event == "MQTT_MESSAGE"
     assert filters["wildcard"] == "dl/+/+/device/#"
     assert "topic" not in filters
+    assert any(
+        "Feeder MQTT persistence disabled; preserving existing feeder MQTT config"
+        in message
+        for message in fake_ad.logs
+    )
 
 
 def test_registry_is_atomic_private_and_excludes_credentials():
@@ -247,10 +291,12 @@ def test_resolution_is_submitted_without_blocking_appdaemon_callback():
         },
     )()
     coordinator.resolving = {"PLAF203/EXAMPLE123"}
+    coordinator.resolve_attempts = {}
     coordinator.resolve_futures = set()
     coordinator._resolve({"device_key": "PLAF203/EXAMPLE123"})
     assert coordinator.ad.submission is not None
     assert coordinator.resolving == {"PLAF203/EXAMPLE123"}
+    assert "PLAF203/EXAMPLE123" in coordinator.resolve_attempts
     assert len(coordinator.resolve_futures) == 1
 
 
@@ -268,17 +314,39 @@ def test_duplicate_resolution_attempt_is_not_scheduled():
     assert calls == []
 
 
-def test_resolution_completion_serializes_registry_update():
+def test_executor_keyword_completion_writes_registry_renders_stream_and_restarts():
     class FakeAD:
         def log(self, *_args, **_kwargs):
             return None
 
     with tempfile.TemporaryDirectory() as temporary:
-        registry = device_discovery.DeviceRegistry(Path(temporary) / "devices.json")
+        data_dir = Path(temporary)
+        registry = device_discovery.DeviceRegistry(data_dir / "devices.json")
         key, device, _created = registry.observe(
             "PLAF203", "EXAMPLE123", "dl/PLAF203/EXAMPLE123/device"
         )
         registry.set_uid(device, "PLAF20300000000ABCD0")
+        registry.persist()
+        options = copy.deepcopy(render_config.DEFAULTS)
+        options.update(
+            mqtt_host="192.0.2.10",
+            mqtt_username="example-user",
+            mqtt_password="example-password",
+            devices=[],
+        )
+        assert render_config.render_go2rtc(options, data_dir, TEMPLATES)
+        assert "petlibro://" not in (data_dir / "go2rtc.yaml").read_text()
+
+        class RenderingReloader:
+            def __init__(self):
+                self.restarts = 0
+
+            def apply(self):
+                changed = render_config.render_go2rtc(options, data_dir, TEMPLATES)
+                if changed:
+                    self.restarts += 1
+                return changed
+
         coordinator = object.__new__(device_discovery.PetlibroDiscovery)
         coordinator.ad = FakeAD()
         coordinator.logger = device_discovery.PetlibroLogger(
@@ -286,42 +354,35 @@ def test_resolution_completion_serializes_registry_update():
         )
         coordinator.registry = registry
         coordinator.resolving = {key}
+        token = "opaque-attempt"
+        coordinator.resolve_attempts = {
+            key: (token, device_discovery._uid_digest(str(device["uid"])))
+        }
         coordinator.resolve_futures = set()
+        coordinator.reloader = RenderingReloader()
         flushes = []
-        coordinator._schedule_flush = lambda *, config_dirty: flushes.append(
-            config_dirty
-        )
+
+        def flush(*, config_dirty):
+            flushes.append(config_dirty)
+            registry.persist()
+            if config_dirty:
+                coordinator.reloader.apply()
+
+        coordinator._schedule_flush = flush
         coordinator._resolve_complete(
-            {
-                "device_key": key,
-                "uid": "PLAF20300000000ABCD0",
-                "result": {
-                    "resolved": True,
-                    "ip_address": "192.0.2.100",
-                    "method": "broadcast",
-                    "elapsed_ms": 40,
-                    "stats": {
-                        "lan_search_w3_1_sent": 1,
-                        "lan_search_w3_2_sent": 1,
-                        "knock2_sent": 1,
-                        "lan_search_r_received": 0,
-                        "knock_rr2_received": 1,
-                        "wrong_uid_rejected": 0,
-                        "nonce_mismatch_rejected": 0,
-                        "broadcasts_sent": 1,
-                        "unicasts_sent": 0,
-                        "packets_received": 1,
-                        "responses_rejected": 0,
-                        "send_errors": 0,
-                        "deadline_exceeded": False,
-                    },
-                },
-            }
+            result=resolver_success(),
+            device_key=key,
+            attempt_token=token,
         )
         assert registry.devices[key]["ip_address"] == "192.0.2.100"
         assert registry.devices[key]["ready"]["ip_resolved"] is True
+        assert registry.devices[key]["ready"]["stream_configured"] is True
         assert key not in coordinator.resolving
+        assert key not in coordinator.resolve_attempts
         assert flushes == [True]
+        assert coordinator.reloader.restarts == 1
+        go2rtc = (data_dir / "go2rtc.yaml").read_text(encoding="utf-8")
+        assert "petlibro://192.0.2.100?" in go2rtc
 
 
 def test_runtime_reloader_restarts_only_when_go2rtc_config_changes():
@@ -353,6 +414,100 @@ def test_runtime_reloader_restarts_only_when_go2rtc_config_changes():
         )
         assert reloader.apply()
         assert calls[-1] == ["s6-svc", "-r", "/run/service/go2rtc"]
+
+
+def test_malformed_stale_and_exception_results_release_attempt_for_retry():
+    class FakeAD:
+        def __init__(self):
+            self.scheduled = []
+
+        def log(self, *_args, **_kwargs):
+            return None
+
+        def run_in(self, callback, delay, **kwargs):
+            self.scheduled.append((callback, delay, kwargs))
+            return "timer"
+
+    cases = ("malformed", "stale_uid", "callback_exception")
+    for case in cases:
+        registry = object.__new__(device_discovery.DeviceRegistry)
+        registry.path = Path(os.devnull)
+        registry.now = device_discovery.utc_now
+        registry.data = {"schema_version": 1, "devices": {}}
+        key, device, _created = registry.observe(
+            "PLAF203", "EXAMPLE123", "dl/PLAF203/EXAMPLE123/device"
+        )
+        registry.set_uid(device, "PLAF20300000000ABCD0")
+        coordinator = object.__new__(device_discovery.PetlibroDiscovery)
+        coordinator.ad = FakeAD()
+        coordinator.logger = device_discovery.PetlibroLogger(
+            coordinator.ad, "petlibro.discovery", "debug"
+        )
+        coordinator.registry = registry
+        coordinator.resolving = {key}
+        token = f"attempt-{case}"
+        coordinator.resolve_attempts = {
+            key: (token, device_discovery._uid_digest(str(device["uid"])))
+        }
+        coordinator.resolve_futures = set()
+        coordinator._schedule_flush = lambda *, config_dirty: None
+        result = {"unexpected": "shape"}
+        if case == "stale_uid":
+            registry.set_uid(device, "PLAF20300000000WXYZ9")
+            result = resolver_success()
+        elif case == "callback_exception":
+            result = resolver_success()
+            registry.resolution_succeeded = lambda *_args: (_ for _ in ()).throw(
+                RuntimeError("synthetic completion failure")
+            )
+
+        coordinator._resolve_complete(
+            result=result,
+            device_key=key,
+            attempt_token=token,
+        )
+
+        assert key not in coordinator.resolving
+        assert key not in coordinator.resolve_attempts
+        before = len(coordinator.ad.scheduled)
+        coordinator._schedule_resolution(key, force=True)
+        assert len(coordinator.ad.scheduled) == before + 1
+
+
+def test_missing_uid_readiness_warning_is_actionable_and_not_repeated():
+    class FakeAD:
+        def __init__(self):
+            self.logs = []
+
+        def log(self, message, **_kwargs):
+            self.logs.append(message)
+
+    coordinator = object.__new__(device_discovery.PetlibroDiscovery)
+    coordinator.ad = FakeAD()
+    coordinator.logger = device_discovery.PetlibroLogger(
+        coordinator.ad, "petlibro.discovery", "debug"
+    )
+    coordinator.registry = type(
+        "Registry",
+        (),
+        {
+            "devices": {
+                "PLAF203/EXAMPLE123": {
+                    "product": "PLAF203",
+                    "serial": "EXAMPLE123",
+                }
+            }
+        },
+    )()
+    coordinator.uid_warning_scheduled = {"PLAF203/EXAMPLE123"}
+    coordinator.uid_missing_warned = set()
+
+    kwargs = {"device_key": "PLAF203/EXAMPLE123"}
+    coordinator._warn_uid_missing(kwargs)
+    coordinator._warn_uid_missing(kwargs)
+
+    matching = [message for message in coordinator.ad.logs if "power-cycle" in message]
+    assert len(matching) == 1
 
 
 def test_stale_or_error_camera_status_requests_reresolution_after_backoff():

@@ -7,11 +7,15 @@ users configure the same values in the ignored `docker/.env` file.
 
 | Home Assistant option | Docker variable | Consumer |
 |---|---|---|
-| `mqtt_host` | `MQTT_HOST` | AppDaemon MQTT plugin and PLAF203 config sync |
-| `mqtt_port` | `MQTT_PORT` | AppDaemon MQTT plugin and PLAF203 config sync |
+| `mqtt_host` | `MQTT_HOST` | AppDaemon MQTT plugin only |
+| `mqtt_port` | `MQTT_PORT` | AppDaemon MQTT plugin only |
 | `mqtt_username` | `MQTT_USERNAME` | AppDaemon MQTT plugin |
 | `mqtt_password` | `MQTT_PASSWORD` | AppDaemon MQTT plugin secrets file |
 | `mqtt_client_id` | `MQTT_CLIENT_ID` | Unique AppDaemon broker client ID |
+| `persist_feeder_mqtt` | `PERSIST_FEEDER_MQTT` | Explicit feeder endpoint persistence gate |
+| `feeder_mqtt_host` | `FEEDER_MQTT_HOST` | Broker address sent to the physical feeder only |
+| `feeder_mqtt_port` | `FEEDER_MQTT_PORT` | Broker port sent to the physical feeder only |
+| `feeder_https_addr` | `FEEDER_HTTPS_ADDR` | Optional HTTPS value in an explicit endpoint update |
 | `device_discovery` | `DEVICE_DISCOVERY` | MQTT identity discovery coordinator |
 | `product_filter` | `PRODUCT_FILTER` | Accepted feeder topic product |
 | `lan_cidr` | `LAN_CIDR` | UID-specific LAN_SEARCH3/KNOCK2 camera-address search network |
@@ -156,3 +160,29 @@ The configured `mqtt_username` and `mqtt_password` authenticate AppDaemon. That
 account must be authorized to subscribe and publish on both the feeder's
 `dl/PLAF203/...` topics and the controller's Home Assistant discovery/command
 topics.
+
+### Feeder MQTT endpoint persistence
+
+`mqtt_host` and `mqtt_port` only tell AppDaemon how to reach the broker. They
+are never copied into the physical feeder's configuration. By default,
+`persist_feeder_mqtt` is false and the controller acknowledges
+`DEVICE_START_EVENT` without sending `DEVICE_CONFIG_SYNC`, preserving the
+feeder's existing MQTT and HTTPS endpoints.
+
+Endpoint persistence is an advanced recovery/migration operation. To use it,
+set `persist_feeder_mqtt: true`, provide a feeder-routable
+`feeder_mqtt_host` and `feeder_mqtt_port`, restart the add-on, then reboot the
+feeder so it emits a new startup event. The host must be an IP address or
+multi-label DNS name. Before enabling the update, the
+controller resolves it from the add-on, rejects loopback, link-local,
+multicast, unspecified, and known Home Assistant internal addresses, then
+opens a bounded TCP connection to the configured port. A validation failure is
+logged and blocks the update without stopping the other backend services.
+
+Do not use `core-mosquitto`: it is resolvable inside Home Assistant but not by
+the physical feeder. Prefer a stable LAN IP or LAN DNS name whose record will
+survive add-on, broker, and router changes. `feeder_https_addr` is optional; an
+empty value is omitted from the update rather than being copied from another
+setting. Current observed startup messages do not report the feeder's existing
+endpoint values, so preservation means not sending an endpoint update when
+those values cannot be read.

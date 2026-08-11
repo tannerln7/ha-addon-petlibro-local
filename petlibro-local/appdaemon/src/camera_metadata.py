@@ -103,6 +103,7 @@ class CameraMetadataPublisher:
         self.last_publish_at = None
         self.last_availability_publish_at = None
         self.last_source_problem = None
+        self.has_seen_runtime_status = False
         self.last_publish_problem = None
         self.last_payload = None
 
@@ -150,6 +151,7 @@ class CameraMetadataPublisher:
         try:
             raw = json.loads(self.status_file.read_text(encoding="utf-8"))
             payload, source_update = self._sanitize(raw)
+            self.has_seen_runtime_status = True
             if now - source_update > datetime.timedelta(
                 seconds=3 * self.heartbeat_seconds
             ):
@@ -163,7 +165,9 @@ class CameraMetadataPublisher:
             return payload
         except FileNotFoundError:
             self._log_source_problem(
-                "missing", "camera runtime status is not available; publishing offline"
+                "missing",
+                "camera runtime status is not available; publishing offline",
+                level="warning" if self.has_seen_runtime_status else "info",
             )
             return self._empty_payload(status="offline", now=now)
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError) as err:
@@ -336,9 +340,11 @@ class CameraMetadataPublisher:
                 self.last_availability = availability
                 self.last_availability_publish_at = now
 
-    def _log_source_problem(self, problem: str, message: str) -> None:
+    def _log_source_problem(
+        self, problem: str, message: str, *, level: str = "warning"
+    ) -> None:
         if problem != self.last_source_problem:
-            self.logger.warning(message)
+            self.logger.log(level, message)
             self.last_source_problem = problem
 
     def _clear_source_problem(self) -> None:

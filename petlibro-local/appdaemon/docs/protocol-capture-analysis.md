@@ -635,8 +635,10 @@ in `src/plaf203.py` and covered by the sanitized fixtures in `tests/`:
 - `GET_FEEDING_PLAN_EVENT` and `GRAIN_OUTPUT_EVENT` responses use `event/sub`.
 - `NTP` and `NTP_SYNC` serialize the current timezone offset and the next two
   offset transitions. Fixed-offset zones send zero transition timestamps.
-- Startup sends `DEVICE_CONFIG_SYNC` after the `DEVICE_START_EVENT`
-  acknowledgement. MQTT, HTTPS, and TUTK region values are configurable.
+- The capture sent `DEVICE_CONFIG_SYNC` after the `DEVICE_START_EVENT`
+  acknowledgement. The maintained controller now preserves existing endpoint
+  values by default and sends this command only after an explicit feeder MQTT
+  persistence opt-in and destination validation.
 - `disableHardwareButton`, `enableLight`, `bowlMode`, and the firmware's
   misspelled `"unkown type"` filesystem value are accepted.
 - Attribute serializers use JSON booleans and omit optional plan fields when
@@ -659,6 +661,10 @@ account data; it preserves only the message shapes needed by the tests.
 - `DEVICE_CONFIG_SYNC` was part of startup, but the capture does not prove
   whether it is mandatory, how often it is refreshed, or how the feeder behaves
   when endpoints are local/unreachable.
+- The observed startup and acknowledgement payloads do not expose the feeder's
+  current MQTT or HTTPS values. Omitting `httpsAddr` in an intentional
+  MQTT-only update remains a live-test question; the default path avoids this
+  uncertainty by omitting the entire command.
 - No OTA PUBLISH occurred. `OTA_INFORM`, `OTA_PROGRESS`, and `OTA_UPGRADE`
   schemas and response topics remain unconfirmed for 3.1.48; only the feeder's
   `ota/sub` subscription was observed.

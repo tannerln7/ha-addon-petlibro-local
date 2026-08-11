@@ -21,6 +21,10 @@ DEFAULTS = {
     "mqtt_username": "",
     "mqtt_password": "",
     "mqtt_client_id": "petlibro_local_backend",
+    "persist_feeder_mqtt": False,
+    "feeder_mqtt_host": "",
+    "feeder_mqtt_port": 1883,
+    "feeder_https_addr": "",
     "device_discovery": True,
     "product_filter": "PLAF203",
     "lan_cidr": "192.168.1.0/24",
@@ -56,6 +60,7 @@ LEGACY_ENV_KEYS = {
 }
 BOOL_KEYS = {
     "device_discovery",
+    "persist_feeder_mqtt",
     "send_delay_ctrl",
     "publish_camera_metadata",
     "verbose_logs",
@@ -63,6 +68,7 @@ BOOL_KEYS = {
 }
 INT_KEYS = {
     "mqtt_port",
+    "feeder_mqtt_port",
     "ip_resolve_timeout_seconds",
     "ip_discovery_broadcast_seconds",
     "ip_discovery_max_unicast_per_second",
@@ -141,6 +147,12 @@ def validate(options: dict[str, object]) -> None:
 
     if not re.fullmatch(r"[A-Za-z0-9_-]+", str(options["mqtt_client_id"])):
         raise ValueError("mqtt_client_id contains unsupported characters")
+    if options["persist_feeder_mqtt"] and not str(
+        options["feeder_mqtt_host"]
+    ).strip():
+        raise ValueError(
+            "feeder_mqtt_host is required when persist_feeder_mqtt is enabled"
+        )
     if not 1 <= int(options["ip_resolve_timeout_seconds"]) <= 60:
         raise ValueError("ip_resolve_timeout_seconds must be between 1 and 60")
     if not 1 <= int(options["ip_discovery_broadcast_seconds"]) <= 10:
@@ -220,7 +232,13 @@ def validate(options: dict[str, object]) -> None:
             "camera_metadata_topic_prefix must contain MQTT path segments without wildcards"
         )
 
-    for key in ("mqtt_port", "go2rtc_api_port", "go2rtc_rtsp_port", "go2rtc_webrtc_port"):
+    for key in (
+        "mqtt_port",
+        "feeder_mqtt_port",
+        "go2rtc_api_port",
+        "go2rtc_rtsp_port",
+        "go2rtc_webrtc_port",
+    ):
         if not 1 <= int(options[key]) <= 65535:
             raise ValueError(f"{key} must be between 1 and 65535")
 
@@ -526,6 +544,9 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
             "ip_retry_backoff_seconds": options["ip_retry_backoff_seconds"],
             "petlibro_log_level": options["log_level"],
             "publish_discovery_ip": True,
+            "persist_feeder_mqtt": options["persist_feeder_mqtt"],
+            "feeder_mqtt_host": options["feeder_mqtt_host"],
+            "feeder_mqtt_port": options["feeder_mqtt_port"],
         },
     )
     for device in _registry_devices(registry):
@@ -545,9 +566,11 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
                     "class": "Plaf203",
                     "product": product,
                     "serial_number": serial,
-                    "mqtt_host": options["mqtt_host"],
-                    "mqtt_port": options["mqtt_port"],
-                    "https_addr": options["mqtt_host"],
+                    "device_uid": str(device.get("uid", "")),
+                    "persist_feeder_mqtt": options["persist_feeder_mqtt"],
+                    "feeder_mqtt_host": options["feeder_mqtt_host"],
+                    "feeder_mqtt_port": options["feeder_mqtt_port"],
+                    "feeder_https_addr": options["feeder_https_addr"],
                     "tutk_p2p_region": "REGION_US",
                     "go2rtc_stream_name": stream_name,
                     "camera_quality": options["camera_quality"],
@@ -600,6 +623,12 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
             os.environ.get(
                 "PETLIBRO_LOGGING_SOURCE",
                 "/opt/petlibro-local/appdaemon/petlibro_logging.py",
+            )
+        ),
+        app_dir / "feeder_mqtt_validation.py": Path(
+            os.environ.get(
+                "PETLIBRO_FEEDER_MQTT_VALIDATION_SOURCE",
+                "/opt/petlibro-local/appdaemon/feeder_mqtt_validation.py",
             )
         ),
     }

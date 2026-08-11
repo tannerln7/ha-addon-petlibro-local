@@ -58,10 +58,10 @@ captures or AppDaemon configuration containing a real device serial.
 2. Copy the `plaf203` block from
    [`src/apps.example.yaml`](src/apps.example.yaml) into your AppDaemon
    `apps.yaml`.
-3. Set `serial_number` to the feeder's `DL_DEVICE_ID` and set `mqtt_host` and
-   `mqtt_port` to the local broker.
-4. If needed for firmware 3.1.48 or later, set `https_addr` and
-   `tutk_p2p_region` to the values appropriate for your environment.
+3. Set `serial_number` to the feeder's `DL_DEVICE_ID`. Configure AppDaemon's
+   MQTT plugin separately with the broker connection used by the controller.
+4. Leave `persist_feeder_mqtt` disabled unless intentionally migrating the
+   physical feeder to a durable LAN broker address.
 5. Reload AppDaemon and inspect its log for `Initializing plaf203`.
 6. Power on the feeder and confirm that `dl/PLAF203/<serial>/device/...` topics
    appear on the broker. Home Assistant should then discover a Petlibro feeder
@@ -75,9 +75,11 @@ That file is ignored intentionally; only the placeholder example is tracked.
 | Option | Required | Default | Description |
 |---|---:|---|---|
 | `serial_number` | yes | — | Feeder `DL_DEVICE_ID`; also used in MQTT topics and Home Assistant entity IDs |
-| `mqtt_host` | yes | — | Broker hostname or address advertised to the feeder |
-| `mqtt_port` | yes | — | Broker TCP port, normally `1883` |
-| `https_addr` | no | `mqtt_host` | API endpoint sent by `DEVICE_CONFIG_SYNC` on newer firmware |
+| `device_uid` | no | empty | Previously discovered camera UID used to seed retained controller identity |
+| `persist_feeder_mqtt` | no | `false` | Explicitly allow a validated feeder endpoint update |
+| `feeder_mqtt_host` | when enabled | empty | Stable LAN IP or multi-label DNS name advertised to the feeder |
+| `feeder_mqtt_port` | no | `1883` | Broker TCP port advertised to the feeder |
+| `feeder_https_addr` | no | empty | Optional API endpoint included in the explicit update |
 | `tutk_p2p_region` | no | `REGION_US` | TUTK region sent during device configuration sync |
 | `petlibro_log_level` | no | `info` | Petlibro application threshold: `critical`, `error`, `warning`, `info`, `debug`, or `trace` |
 
@@ -92,12 +94,29 @@ plaf203:
   module: plaf203
   class: Plaf203
   serial_number: '00000000000000000'
-  mqtt_host: '127.0.0.1'
-  mqtt_port: 1883
-  https_addr: '127.0.0.1'
+  device_uid: ''
+  persist_feeder_mqtt: false
+  feeder_mqtt_host: ''
+  feeder_mqtt_port: 1883
+  feeder_https_addr: ''
   tutk_p2p_region: 'REGION_US'
   petlibro_log_level: 'info'
 ```
+
+With persistence disabled, the controller acknowledges feeder startup but does
+not send `DEVICE_CONFIG_SYNC`, so it cannot replace stored MQTT or HTTPS
+values. When enabled, it rejects single-label/container-only names, unsafe or
+Home Assistant internal addresses, DNS failures, and an unreachable MQTT port
+before sending. An empty `feeder_https_addr` is omitted rather than derived
+from another setting. The tested startup messages do not expose the feeder's
+current endpoint values, so the safe preservation strategy is to avoid an
+update when they cannot be copied.
+
+Heartbeat count resets and watchdog timeouts produce idempotent offline/online
+transitions. Initial clock drift starts one NTP correction request; repeated
+drift observations are deduplicated while it is pending, and failure is
+reported only when the acknowledgement remains outside tolerance or the
+correction times out.
 
 ## Feeding plans
 

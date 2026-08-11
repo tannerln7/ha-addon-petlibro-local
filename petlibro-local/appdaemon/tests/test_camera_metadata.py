@@ -14,10 +14,12 @@ from camera_metadata import CameraMetadataPublisher
 class FakeAd:
     def __init__(self):
         self.logs = []
+        self.log_levels = []
         self.cancelled = []
 
-    def log(self, message):
+    def log(self, message, **kwargs):
         self.logs.append(message)
+        self.log_levels.append(kwargs.get("level"))
 
     def run_every(self, callback, start, interval):
         self.scheduled = (callback, start, interval)
@@ -149,6 +151,7 @@ class CameraMetadataPublisherTests(unittest.TestCase):
     def test_missing_malformed_and_stale_status_are_safe(self):
         self.publisher.poll()
         self.assertEqual("offline", self.mqtt.published[1][1])
+        self.assertIn("[INFO]", self.ad.logs[-1])
 
         self.current += datetime.timedelta(seconds=1)
         self.status_file.write_text("{not-json", encoding="utf-8")
@@ -169,6 +172,16 @@ class CameraMetadataPublisherTests(unittest.TestCase):
         ]
         self.assertEqual("offline", state_messages[-1]["status"])
         self.assertEqual(3, len(self.ad.logs))
+
+    def test_missing_status_becomes_warning_after_runtime_status_was_seen(self):
+        self.write_status()
+        self.publisher.poll()
+        self.status_file.unlink()
+        self.current += datetime.timedelta(seconds=1)
+        self.publisher.poll()
+
+        self.assertIn("[WARNING]", self.ad.logs[-1])
+        self.assertEqual("WARNING", self.ad.log_levels[-1])
 
     def test_start_and_stop_manage_timer_and_offline_state(self):
         self.write_status()

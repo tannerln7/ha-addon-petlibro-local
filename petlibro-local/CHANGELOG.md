@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- Stop copying the add-on-only `mqtt_host` into the physical feeder during
+  startup. Endpoint persistence is now disabled by default and requires a
+  separate feeder-facing host, an explicit opt-in, and DNS/address/TCP
+  validation before `DEVICE_CONFIG_SYNC` can be sent.
+- Add startup, validation, send-attempt, and acknowledgement logging for safe
+  feeder broker migration and recovery.
+- Fix AppDaemon executor completion handling so successful address resolution
+  updates the private registry, renders the go2rtc stream, and reloads go2rtc.
+  Failed, malformed, exceptional, and stale completions now release their
+  attempt guard so later retries are not suppressed.
+- Propagate an already-discovered camera UID into dynamically rendered feeder
+  controllers and add a one-time, actionable power-cycle message when startup
+  identity traffic was missed.
+- Make heartbeat restart transitions idempotent, avoid first-contact storage
+  warnings, and treat initial NTP drift as a deduplicated correction in progress
+  until its acknowledgement fails validation or times out.
+- Log an absent camera runtime status as normal startup information until a
+  status file has previously existed; malformed, stale, or lost status remains
+  a warning.
+
 ## 0.2.4
 
 - Fix AppDaemon startup by rendering the user-facing `log_level` option as the
