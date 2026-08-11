@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4
+
+- Fix AppDaemon startup by rendering the user-facing `log_level` option as the
+  non-reserved `petlibro_log_level` app argument, preserving Petlibro's
+  lowercase and `trace` levels without overriding AppDaemon's logger.
+
 ## 0.2.3
 
 - Pull a prebuilt amd64 add-on image from GHCR for normal Home Assistant

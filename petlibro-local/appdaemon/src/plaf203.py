@@ -4263,7 +4263,7 @@ class Plaf203(adbase.ADBase):
 
         self.ad: adapi.ADAPI = self.get_ad_api()
         self.mqtt: mqttapi.Mqtt = self.get_plugin_api("MQTT")
-        log_level = self.args.get('log_level', 'info')
+        log_level = self.args.get('petlibro_log_level', 'info')
         self.logger = PetlibroLogger(self.ad, "petlibro.controller", log_level)
 
         self.camera_metadata = CameraMetadataPublisher(

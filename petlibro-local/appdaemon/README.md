@@ -79,6 +79,11 @@ That file is ignored intentionally; only the placeholder example is tracked.
 | `mqtt_port` | yes | — | Broker TCP port, normally `1883` |
 | `https_addr` | no | `mqtt_host` | API endpoint sent by `DEVICE_CONFIG_SYNC` on newer firmware |
 | `tutk_p2p_region` | no | `REGION_US` | TUTK region sent during device configuration sync |
+| `petlibro_log_level` | no | `info` | Petlibro application threshold: `critical`, `error`, `warning`, `info`, `debug`, or `trace` |
+
+Use `petlibro_log_level`, not AppDaemon's reserved `log_level` setting. The
+Petlibro logger accepts lowercase values and adds the non-standard `trace`
+threshold without changing AppDaemon's own logger configuration.
 
 Example:
 
@@ -91,6 +96,7 @@ plaf203:
   mqtt_port: 1883
   https_addr: '127.0.0.1'
   tutk_p2p_region: 'REGION_US'
+  petlibro_log_level: 'info'
 ```
 
 ## Feeding plans

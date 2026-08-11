@@ -15,3 +15,7 @@ plaf203:
   # and tutk_p2p_region defaults to REGION_US when omitted.
   https_addr: '127.0.0.1'
   tutk_p2p_region: 'REGION_US'
+
+  # Petlibro-specific filtering. Do not use AppDaemon's reserved log_level key;
+  # it does not support the lowercase Petlibro levels or the trace level.
+  petlibro_log_level: 'info'

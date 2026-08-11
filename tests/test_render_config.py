@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from appdaemon.models.config.app import AllAppConfig
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "petlibro-local" / "render_config.py"
@@ -27,6 +29,20 @@ class RenderConfigTests(unittest.TestCase):
             "image: ghcr.io/tannerln7/ha-addon-petlibro-local\n", manifest
         )
         self.assertIn("arch:\n  - amd64\n", manifest)
+
+    def test_generated_apps_do_not_override_appdaemon_log_level(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            options = self.options(devices=[self.manual_device()])
+            options["log_level"] = "trace"
+            render_config.validate(options)
+            self.render_all(options, data_dir)
+
+            config = AllAppConfig.from_config_file(data_dir / "apps.yaml")
+            for app_name in ("petlibro_discovery", "plaf203_example123"):
+                app = config[app_name]
+                self.assertIsNone(app.log_level)
+                self.assertEqual("trace", app.args["petlibro_log_level"])
 
     def options(self, *, devices=None):
         options = copy.deepcopy(render_config.DEFAULTS)
@@ -95,6 +111,8 @@ class RenderConfigTests(unittest.TestCase):
             self.assertIn("dump_c2d_plain=%2Fdata%2Fpetlibro_c2d_petlibro_feeder.dat", go2rtc)
             self.assertIn("petlibro_discovery:", apps)
             self.assertIn("plaf203_example123:", apps)
+            self.assertEqual(2, apps.count('petlibro_log_level: "info"'))
+            self.assertNotIn("\n  log_level:", apps)
             self.assertIn('client_id: "petlibro_local_backend"', appdaemon)
             self.assertNotIn("example-password", registry)
             self.assertNotIn("example-user", registry)
@@ -199,6 +217,9 @@ class RenderConfigTests(unittest.TestCase):
             go2rtc = (data_dir / "go2rtc.yaml").read_text(encoding="utf-8")
             self.assertIn("trace_packets=1", go2rtc)
             self.assertIn("trace_ack=1", go2rtc)
+            apps = (data_dir / "apps.yaml").read_text(encoding="utf-8")
+            self.assertIn('petlibro_log_level: "trace"', apps)
+            self.assertNotIn("\n  log_level:", apps)
 
     def test_empty_registry_starts_discovery_without_a_camera_stream(self):
         with tempfile.TemporaryDirectory() as temporary:

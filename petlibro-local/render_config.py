@@ -524,7 +524,7 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
             ],
             "ip_refresh_interval_minutes": options["ip_refresh_interval_minutes"],
             "ip_retry_backoff_seconds": options["ip_retry_backoff_seconds"],
-            "log_level": options["log_level"],
+            "petlibro_log_level": options["log_level"],
             "publish_discovery_ip": True,
         },
     )
@@ -561,7 +561,7 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
                     "camera_metadata_interval_seconds": options[
                         "camera_metadata_interval_seconds"
                     ],
-                    "log_level": options["log_level"],
+                    "petlibro_log_level": options["log_level"],
                 },
             )
         )

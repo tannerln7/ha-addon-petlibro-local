@@ -459,7 +459,9 @@ class PetlibroDiscovery(ADBase):
             str(self.args["renderer_command"]), str(self.args["go2rtc_service"])
         )
         self.logger = PetlibroLogger(
-            self.ad, "petlibro.discovery", self.args.get("log_level", "info")
+            self.ad,
+            "petlibro.discovery",
+            self.args.get("petlibro_log_level", "info"),
         )
         self.flush_handle = None
         self.config_dirty = False
