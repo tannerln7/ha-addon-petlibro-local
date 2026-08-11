@@ -53,6 +53,18 @@ Build the production image separately:
 ./scripts/build-local.sh
 ```
 
+Local image builds default to `GO_BUILD_PROCS=2`, which sets both
+`GOMAXPROCS` and Go's package build parallelism for the compile stages. Override
+it only on a development machine with enough CPU and memory:
+
+```bash
+GO_BUILD_PROCS=4 ./scripts/build-local.sh
+```
+
+The Dockerfile leaves compiler concurrency unrestricted when
+`GO_BUILD_PROCS` is omitted, so the GitHub-hosted release build can use its
+available runner resources.
+
 Do not run a live feeder test unless device values are supplied through the
 ignored `docker/.env` or Home Assistant options.
 
@@ -103,3 +115,25 @@ When changing protocol behavior:
 Current Home Assistant builders no longer consume `build.yaml`. The add-on uses
 an explicit pinned Home Assistant base image in `petlibro-local/Dockerfile`, as
 required by Supervisor 2026.04 and later.
+
+Normal Home Assistant installations use the generic image configured in
+`petlibro-local/config.yaml`:
+
+```text
+ghcr.io/tannerln7/ha-addon-petlibro-local
+```
+
+`.github/workflows/publish-addon-image.yml` runs on changes to `main` that
+affect the add-on and can also be dispatched manually. It reads the architecture
+and version from `config.yaml`, builds the validated `amd64` image with the
+Home Assistant BuildKit actions, publishes versioned and `latest` per-arch
+images, and publishes the generic manifest used by Supervisor. The workflow
+uses `GITHUB_TOKEN`; no repository secret is required. After the package is
+created for the first time, set both the generic and `amd64-` GHCR package
+visibility to public so Home Assistant can pull the release anonymously.
+
+For a Supervisor local build, copy the add-on directory into the local add-ons
+location and comment out `image:` in that copy of `config.yaml`. Keep the image
+field enabled in release commits. Home Assistant recommends prebuilt images
+because local builds compile dependencies on the appliance; see the
+[publishing guide](https://developers.home-assistant.io/docs/apps/publishing/).

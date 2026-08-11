@@ -15,6 +15,29 @@ docker compose config --quiet
 docker compose logs --follow petlibro-local
 ```
 
+## Installation uses high CPU or appears stuck
+
+Repository installs should pull
+`ghcr.io/tannerln7/ha-addon-petlibro-local:<version>` and should not compile on
+the Home Assistant host. If Supervisor reports a Docker build or the host CPU
+stays near 100%, refresh the repository and confirm its `config.yaml` still has
+the `image:` field. A copied local add-on whose `image:` field was removed or
+commented out intentionally falls back to a local build.
+
+Local builds compile patched go2rtc and install Python/AppDaemon dependencies.
+They can temporarily make a Raspberry Pi-class or otherwise constrained Home
+Assistant system unresponsive. Prefer the repository install. For development
+Docker builds, use the maintained default limit or lower it further:
+
+```bash
+GO_BUILD_PROCS=1 ./scripts/build-local.sh
+```
+
+If Supervisor reports that it cannot pull the GHCR image, verify that the tag
+matches the add-on version and that the GHCR package is public. Public GHCR
+container packages can be pulled anonymously; private packages cannot be used
+by an ordinary add-on installation without registry authentication.
+
 ## Check go2rtc
 
 Open the web interface at `http://HOME_ASSISTANT_HOST:1984/` or the configured

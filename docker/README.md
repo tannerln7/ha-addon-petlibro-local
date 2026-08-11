@@ -39,12 +39,24 @@ JSON array of manual device overrides; leave it as `[]` for normal setup.
 
 ## Build and run
 
+This Docker/LXC path remains a source build for development and self-hosted
+deployments; it does not pull the Home Assistant GHCR release image. Building
+patched go2rtc can saturate a small host temporarily. Compose defaults
+`GO_BUILD_PROCS` to `2` to limit Go compiler concurrency. Set a different value
+in `docker/.env` only when the build host has suitable CPU and memory.
+
 The direct Compose workflow is:
 
 ```bash
 cd docker
 docker compose up -d --build
 docker compose logs -f
+```
+
+To use more build parallelism on a capable development host:
+
+```bash
+GO_BUILD_PROCS=4 docker compose up -d --build
 ```
 
 From the repository root, the maintained wrappers provide the same build and

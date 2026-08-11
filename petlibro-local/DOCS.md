@@ -4,6 +4,24 @@ The add-on generates go2rtc and AppDaemon configuration in `/data` each time a
 service starts. Users should edit options through Home Assistant rather than
 changing files inside the container.
 
+## Installation and updates
+
+The repository configuration points Supervisor at the prebuilt amd64 image:
+
+```text
+ghcr.io/tannerln7/ha-addon-petlibro-local:<add-on-version>
+```
+
+Normal installation and updates pull that image instead of compiling go2rtc
+and installing AppDaemon dependencies on the Home Assistant machine. The GHCR
+packages must be public so Supervisor can pull them without registry
+credentials.
+
+Local builds are intended only for development. In a copied local add-on,
+comment out the `image:` field in `config.yaml` to make Supervisor build the
+Dockerfile. Such builds can consume all available CPU temporarily, particularly
+on Raspberry Pi-class and other low-resource installations.
+
 ## Discovery-first setup
 
 | Option | Default | Description |

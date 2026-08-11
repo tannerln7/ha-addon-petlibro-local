@@ -27,6 +27,19 @@ The camera implementation has been validated with hybrid ACK behavior,
 transitions on tested firmware. A session can remain at 640x360 beyond the
 configured probe window before later producing 1920x1080 media.
 
+## Installation image
+
+Normal Home Assistant OS installs pull the prebuilt amd64 image
+`ghcr.io/tannerln7/ha-addon-petlibro-local:<version>`. Home Assistant therefore
+does not compile go2rtc or install AppDaemon dependencies on the appliance
+during installation. This is especially important for Raspberry Pi-class and
+other low-resource hosts, where a local image build can saturate the CPU and
+temporarily make Home Assistant unresponsive.
+
+The image is built with GitHub Actions from this repository. Local Docker and
+Supervisor builds remain available for development, but they are not the
+normal installation path.
+
 ## Home Assistant OS installation
 
 Repository URL:
@@ -47,10 +60,12 @@ To install from a repository that Home Assistant can access:
 6. Watch the app log until MQTT identity discovery, LAN address resolution, and
    stream configuration complete.
 
-For local development before a remote exists, copy the
-[`petlibro-local`](petlibro-local/) directory into
-`/addons/petlibro-local` on Home Assistant OS, reload the app store, and install
-it from **Local apps**.
+For a local Supervisor development build, copy
+[`petlibro-local`](petlibro-local/) into `/addons/petlibro-local`, comment out
+the `image:` line in the copied `config.yaml`, reload the app store, and install
+it from **Local apps**. Do this only when testing image changes: the local build
+compiles Go and installs Python packages on the Home Assistant host and can peg
+the CPU until it finishes.
 
 Serial, camera UID, and device IP are normally automatic. The backend reads the
 serial from `dl/PLAF203/<serial>/device/...`, reads the UID from the feeder's
@@ -117,7 +132,8 @@ docker compose logs -f
 ```
 
 Docker Compose uses host networking and persists generated configuration and
-debug dumps under `docker/data/`. See the
+debug dumps under `docker/data/`. It intentionally builds from the local source
+tree; `GO_BUILD_PROCS` defaults to `2` to reduce compiler pressure. See the
 [Docker and Proxmox guide](docker/README.md) for prerequisites and operations.
 
 ## Security

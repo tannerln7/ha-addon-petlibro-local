@@ -5,6 +5,7 @@ services:
       args:
         BUILD_ARCH: amd64
         BUILD_VERSION: local
+        GO_BUILD_PROCS: ${GO_BUILD_PROCS:-2}
     image: petlibro-local:local
     container_name: petlibro-local
     restart: unless-stopped

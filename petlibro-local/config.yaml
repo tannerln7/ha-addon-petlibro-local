@@ -3,6 +3,7 @@ version: "0.2.2"
 slug: petlibro_local
 description: Local PLAF203 MQTT control and camera streaming backend
 url: https://github.com/tannerln7/ha-addon-petlibro-local
+image: ghcr.io/tannerln7/ha-addon-petlibro-local
 arch:
   - amd64
 startup: application

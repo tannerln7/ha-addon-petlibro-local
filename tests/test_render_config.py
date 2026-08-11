@@ -18,6 +18,16 @@ SPEC.loader.exec_module(render_config)
 
 
 class RenderConfigTests(unittest.TestCase):
+    def test_addon_manifest_uses_prebuilt_amd64_image(self):
+        manifest = (ROOT / "petlibro-local" / "config.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "image: ghcr.io/tannerln7/ha-addon-petlibro-local\n", manifest
+        )
+        self.assertIn("arch:\n  - amd64\n", manifest)
+
     def options(self, *, devices=None):
         options = copy.deepcopy(render_config.DEFAULTS)
         options.update(

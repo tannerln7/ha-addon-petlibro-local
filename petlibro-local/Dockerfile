@@ -1,14 +1,22 @@
 ARG GO_VERSION=1.26.5
 FROM golang:${GO_VERSION}-alpine3.23 AS go2rtc-builder
 
+ARG GO_BUILD_PROCS=""
+
 WORKDIR /src/go2rtc
 COPY go2rtc/go.mod go2rtc/go.sum ./
 RUN go mod download
 COPY go2rtc/ ./
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/go2rtc . \
-    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/petlibro-resolve ./cmd/petlibro-resolve
+RUN set -eu; \
+    set --; \
+    if [ -n "${GO_BUILD_PROCS}" ]; then \
+        export GOMAXPROCS="${GO_BUILD_PROCS}"; \
+        set -- "-p=${GO_BUILD_PROCS}"; \
+    fi; \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+        go build "$@" -trimpath -ldflags="-s -w" -o /out/go2rtc .; \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+        go build "$@" -trimpath -ldflags="-s -w" -o /out/petlibro-resolve ./cmd/petlibro-resolve
 
 FROM ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.23
 

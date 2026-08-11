@@ -8,6 +8,12 @@ This experimental Home Assistant app/add-on runs two local PLAF203 services:
 It does not provision an MQTT broker or the physical feeder's broker account.
 The configured MQTT username and password authenticate this backend only.
 
+Normal Home Assistant installations pull the prebuilt amd64 image from
+`ghcr.io/tannerln7/ha-addon-petlibro-local`. They do not compile the patched
+go2rtc source or install Python dependencies on the Home Assistant host. Local
+Supervisor builds are development-only: comment out `image:` in `config.yaml`
+to force one, and expect high CPU use while it runs on a low-resource system.
+
 ## Before starting
 
 Configure the MQTT broker and feeder LAN subnet on the **Configuration** tab.
