@@ -83,6 +83,8 @@ sub, and audio channels retain independent frame state.
 Receive ACK state is independent from the assembler output cursor. The
 contiguous ACK watermark advances only for wire sequences actually received;
 force-draining an assembler hole does not acknowledge that missing packet.
+Positions above a hole are compressed into a capped set of consecutive ranges,
+preventing a single permanent gap from growing memory once per received packet.
 
 Wire constants and captured templates live in
 [`pkg/petlibro/templates.go`](../../pkg/petlibro/templates.go). Parser,

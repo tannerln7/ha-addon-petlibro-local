@@ -110,7 +110,9 @@ Home Assistant internal addresses, DNS failures, and an unreachable MQTT port
 before sending. An empty `feeder_https_addr` is omitted rather than derived
 from another setting. The tested startup messages do not expose the feeder's
 current endpoint values, so the safe preservation strategy is to avoid an
-update when they cannot be copied.
+update when they cannot be copied. A persistence acknowledgement is reported
+only when the feeder returns `code: 0` with the same `msgId` as the outstanding
+`DEVICE_CONFIG_SYNC` request.
 
 Heartbeat count resets and watchdog timeouts produce idempotent offline/online
 transitions. Initial clock drift starts one NTP correction request; repeated
@@ -133,7 +135,9 @@ On startup, the controller synchronizes a feeding plan only when its persistent
 state contains at least one configured plan. A newly initialized empty state is
 not sent to the feeder, so first contact cannot clear an existing device
 schedule. An explicit schedule update remains authoritative; explicitly setting
-an empty collection clears the feeder schedule.
+an empty collection clears the feeder schedule. AppDaemon stores this state in
+the persistent `plaf203` namespace, so configured plans and the manual-feed
+portion default survive add-on restarts.
 
 ## Network notes
 

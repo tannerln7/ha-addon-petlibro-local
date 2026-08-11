@@ -3131,6 +3131,7 @@ class Backend:
         self.is_online: bool = False
         self.ntp_sync_pending_message_id: Optional[str] = None
         self.ntp_sync_timeout_handle = None
+        self.device_config_sync_pending_message_id: Optional[str] = None
 
         # Hack:
         # These are actually stored on the device but the device
@@ -3478,6 +3479,9 @@ class Backend:
                 https_addr = self.feeder_https_addr,
                 tutk_p2p_region = self.tutk_p2p_region,
             )
+            self.device_config_sync_pending_message_id = (
+                device_config_sync_out.message_id.data
+            )
             self.client.device_config_sync_send(device_config_sync_out)
             self.logger.info(
                 "feeder MQTT persistence request sent",
@@ -3821,6 +3825,17 @@ class Backend:
         self._device_timestamp_sync_drift_check_and_adjust(feeding_plan_service_in.timestamp)
 
     def _device_config_sync_cb(self, device_config_sync_in: DeviceConfigSyncIn):
+        pending_message_id = self.device_config_sync_pending_message_id
+        if (
+            pending_message_id is None
+            or device_config_sync_in.message_id.data != pending_message_id
+        ):
+            self.logger.debug(
+                "ignored stale feeder MQTT persistence acknowledgement"
+            )
+            return
+
+        self.device_config_sync_pending_message_id = None
         if device_config_sync_in.code != Code.OK:
             self._error_report("Configuring device endpoints failed")
             return
@@ -4289,6 +4304,7 @@ class HomeAssistantDiscoveryMqtt:
 #  namespaces:
 #    plaf203:
 #      writeback: safe
+#      persistent: true
 
 class Storage:
     def __init__(self, ad: adapi.ADAPI, namespace: str, serial_number: str):
@@ -4301,10 +4317,18 @@ class Storage:
         self.ad.set_namespace('plaf203')
 
         if not self._entity_state_exists(self.food_manual_feed_grain_num_entity_id):
-            self._entity_state_int_set(self.food_manual_feed_grain_num_entity_id, 1)
+            self._entity_state_int_set(
+                self.food_manual_feed_grain_num_entity_id,
+                1,
+                check_existence = False,
+            )
 
         if not self._entity_state_exists(self.food_plans_entity_id):
-            self._entity_state_dict_set(self.food_plans_entity_id, FoodPlans.create_empty().to_dict())
+            self._entity_state_dict_set(
+                self.food_plans_entity_id,
+                FoodPlans.create_empty().to_dict(),
+                check_existence = False,
+            )
 
     def terminate(self):
         self.ad.save_namespace()
@@ -4332,18 +4356,30 @@ class Storage:
     def _entity_state_int_get(self, name: str) -> str:
         return self.ad.get_state(name, namespace = 'plaf203')
 
-    def _entity_state_dict_set(self, name: str, state: dict):
+    def _entity_state_dict_set(
+        self,
+        name: str,
+        state: dict,
+        check_existence: bool = True,
+    ):
         json_str = json.dumps(state)
         self.ad.set_state(
             name,
             state = json_str,
-            namespace = 'plaf203')
+            namespace = 'plaf203',
+            check_existence = check_existence)
 
-    def _entity_state_int_set(self, name: str, state: int):
+    def _entity_state_int_set(
+        self,
+        name: str,
+        state: int,
+        check_existence: bool = True,
+    ):
         self.ad.set_state(
             name,
             state = state,
-            namespace = 'plaf203')
+            namespace = 'plaf203',
+            check_existence = check_existence)
 
 ########################################################################################################################
 

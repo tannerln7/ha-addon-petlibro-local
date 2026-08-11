@@ -810,6 +810,52 @@ func TestForceDrainDoesNotAdvanceACKWatermark(t *testing.T) {
 	}
 }
 
+func TestACKTrackingCompressesOnePermanentGap(t *testing.T) {
+	c := newTestClient(0x4000, "hd")
+	c.initACKTracking(0x4000)
+
+	for subExt := uint64(0x4002); subExt < 0x8000; subExt++ {
+		c.markACKReceived(subExt)
+	}
+	if got := len(c.ackSeenRanges); got != 1 {
+		t.Fatalf("ackSeenRanges=%d, want 1", got)
+	}
+	if got, want := c.stats.ackSeenPending.Load(), uint64(0x8000-0x4002); got != want {
+		t.Fatalf("ackSeenPending=%d, want %d", got, want)
+	}
+	if got := c.stats.ackTrackingOverflow.Load(); got != 0 {
+		t.Fatalf("ackTrackingOverflow=%d, want 0", got)
+	}
+
+	c.markACKReceived(0x4001)
+	if got := c.contiguousAckExt(); got != 0x7fff {
+		t.Fatalf("watermark=0x%x, want 0x7fff", got)
+	}
+	if got := len(c.ackSeenRanges); got != 0 {
+		t.Fatalf("ackSeenRanges after gap closure=%d, want 0", got)
+	}
+	if got := c.stats.ackSeenPending.Load(); got != 0 {
+		t.Fatalf("ackSeenPending after gap closure=%d, want 0", got)
+	}
+}
+
+func TestACKTrackingCapsDisjointRanges(t *testing.T) {
+	c := newTestClient(0x4000, "hd")
+
+	for i := uint64(0); i < maxACKSeenRanges+32; i++ {
+		c.markACKReceived(0x4002 + i*2)
+	}
+	if got := len(c.ackSeenRanges); got != maxACKSeenRanges {
+		t.Fatalf("ackSeenRanges=%d, want %d", got, maxACKSeenRanges)
+	}
+	if got := c.stats.ackSeenPending.Load(); got != maxACKSeenRanges {
+		t.Fatalf("ackSeenPending=%d, want %d", got, maxACKSeenRanges)
+	}
+	if got := c.stats.ackTrackingOverflow.Load(); got != 32 {
+		t.Fatalf("ackTrackingOverflow=%d, want 32", got)
+	}
+}
+
 // TestChannelAsmInterleavedMainAndSub — ch=0x05 IDR and ch=0x07 P-frame
 // fragments arriving interleaved (in wire order) must NOT corrupt each
 // other: the per-channel `channelAsm` state means each channel can

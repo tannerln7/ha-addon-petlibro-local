@@ -175,6 +175,9 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertEqual(boot.message_id.data, calls[0][1]['msgId'])
         self.assertEqual([{'host': 'mqtt.example.test', 'port': 1883}], calls[1][1]['mqttAddr'])
         self.assertEqual('api.example.test', calls[1][1]['httpsAddr'])
+        self.assertEqual(
+            calls[1][1]['msgId'], backend.device_config_sync_pending_message_id
+        )
 
     def test_device_config_sync_omits_unspecified_https_override(self):
         payload = p.DeviceConfigSyncOut.create(
@@ -200,12 +203,16 @@ class ProtocolCompatibilityTests(unittest.TestCase):
                 raise AssertionError("get_state must not be used as an existence check")
 
             def set_state(self, name, **kwargs):
-                self.created.append((name, kwargs["state"]))
+                self.created.append((name, kwargs))
 
         ad = StorageAD()
         storage = p.Storage(ad, 'plaf203', 'SERIAL')
         storage.initialize()
         self.assertEqual(2, len(ad.created))
+        self.assertTrue(all(
+            created[1]["check_existence"] is False
+            for created in ad.created
+        ))
 
     def _heartbeat_backend(self, food_plans):
         calls = []
@@ -374,6 +381,36 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.client.device_config_sync_listen(received.append)
         self.client._mqtt_recv_service_cb('', {'payload': json.dumps(response)}, {})
         self.assertEqual(response['msgId'], received[0].message_id.data)
+
+    def test_device_config_acknowledgement_requires_matching_pending_request(self):
+        backend = p.Backend()
+        backend.logger = p.PetlibroLogger(self.ad, "petlibro.backend", "debug")
+        backend.persist_feeder_mqtt = True
+        backend.feeder_mqtt_host = 'mqtt.example.test'
+        backend.feeder_mqtt_port = 1883
+        backend.device_config_sync_pending_message_id = 'expected-config-id'
+        backend._device_timestamp_sync_drift_check_and_adjust = lambda timestamp: None
+        errors = []
+        backend._error_report = errors.append
+
+        backend._device_config_sync_cb(p.DeviceConfigSyncIn(
+            p.MessageId('stale-config-id'), p.Timestamp.now(), p.Code.OK
+        ))
+        self.assertEqual(
+            'expected-config-id', backend.device_config_sync_pending_message_id
+        )
+        self.assertFalse(any(
+            'persistence acknowledged' in message for message in self.ad.logs
+        ))
+
+        backend._device_config_sync_cb(p.DeviceConfigSyncIn(
+            p.MessageId('expected-config-id'), p.Timestamp.now(), p.Code.OK
+        ))
+        self.assertIsNone(backend.device_config_sync_pending_message_id)
+        self.assertTrue(any(
+            'persistence acknowledged' in message for message in self.ad.logs
+        ))
+        self.assertEqual([], errors)
 
     def test_get_plan_and_grain_ack_use_event_sub_and_echo_fields(self):
         get_request = p.GetFeedingPlanEventIn.from_mqtt_payload(GET_PLAN_REQUEST['payload'])

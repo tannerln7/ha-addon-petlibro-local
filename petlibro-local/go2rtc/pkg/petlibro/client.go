@@ -70,7 +70,16 @@ const (
 
 	defaultACKLagWindow uint64 = 8
 	defaultACKInterval         = 25 * time.Millisecond
+	// A range represents any number of consecutive received packets, so the
+	// common one-hole case stays constant-size. The cap prevents a hostile or
+	// severely reordered stream from creating an unbounded number of ranges.
+	maxACKSeenRanges = 256
 )
+
+type ackSeenRange struct {
+	first uint64
+	last  uint64
+}
 
 // log is the package-level zerolog instance.  internal/petlibro's
 // Init() injects app.GetLogger("petlibro") via SetLogger so library
@@ -121,7 +130,8 @@ type Client struct {
 	// advance ackWatermarkExt.
 	ackMu              sync.Mutex
 	ackWatermarkExt    uint64
-	ackSeen            map[uint64]struct{}
+	ackSeenRanges      []ackSeenRange
+	ackSeenPending     uint64
 	ackMode            ackMode
 	ackLagWindow       uint64
 	ackLastPrev        uint16
@@ -273,14 +283,16 @@ type counters struct {
 	frameInfoFlag       atomic.Uint64
 	frameInfoByte4      atomic.Uint64
 
-	ackWatermark      atomic.Uint64 // current extended contiguous receive watermark (gauge)
-	ackSeenPending    atomic.Uint64 // received entries above a gap (gauge)
-	ackDuplicateOrOld atomic.Uint64 // duplicate or already-contiguously-ACKed AV packets
-	ackAdvanced       atomic.Uint64 // sequence positions by which the receive watermark advanced
-	ackHigh           atomic.Uint64 // highest extended AV sequence observed (gauge)
-	ackSent           atomic.Uint64 // maintenance ACK datagrams successfully sent
-	ackPrevLow16      atomic.Uint64 // previous/lower field in the latest maintenance ACK (gauge)
-	ackCurrentLow16   atomic.Uint64 // current/upper field in the latest maintenance ACK (gauge)
+	ackWatermark        atomic.Uint64 // current extended contiguous receive watermark (gauge)
+	ackSeenPending      atomic.Uint64 // received entries above a gap (gauge)
+	ackSeenRanges       atomic.Uint64 // disjoint receive ranges retained above the watermark (gauge)
+	ackTrackingOverflow atomic.Uint64 // unique positions omitted after the range cap is reached
+	ackDuplicateOrOld   atomic.Uint64 // duplicate or already-contiguously-ACKed AV packets
+	ackAdvanced         atomic.Uint64 // sequence positions by which the receive watermark advanced
+	ackHigh             atomic.Uint64 // highest extended AV sequence observed (gauge)
+	ackSent             atomic.Uint64 // maintenance ACK datagrams successfully sent
+	ackPrevLow16        atomic.Uint64 // previous/lower field in the latest maintenance ACK (gauge)
+	ackCurrentLow16     atomic.Uint64 // current/upper field in the latest maintenance ACK (gauge)
 }
 
 // countersSnapshot is a plain-value snapshot of counters for diff
@@ -339,14 +351,16 @@ type countersSnapshot struct {
 	frameInfoFlag       uint64
 	frameInfoByte4      uint64
 
-	ackWatermark      uint64
-	ackSeenPending    uint64
-	ackDuplicateOrOld uint64
-	ackAdvanced       uint64
-	ackHigh           uint64
-	ackSent           uint64
-	ackPrevLow16      uint64
-	ackCurrentLow16   uint64
+	ackWatermark        uint64
+	ackSeenPending      uint64
+	ackSeenRanges       uint64
+	ackTrackingOverflow uint64
+	ackDuplicateOrOld   uint64
+	ackAdvanced         uint64
+	ackHigh             uint64
+	ackSent             uint64
+	ackPrevLow16        uint64
+	ackCurrentLow16     uint64
 }
 
 func (c *counters) snapshot() countersSnapshot {
@@ -404,14 +418,16 @@ func (c *counters) snapshot() countersSnapshot {
 		frameInfoFlag:       c.frameInfoFlag.Load(),
 		frameInfoByte4:      c.frameInfoByte4.Load(),
 
-		ackWatermark:      c.ackWatermark.Load(),
-		ackSeenPending:    c.ackSeenPending.Load(),
-		ackDuplicateOrOld: c.ackDuplicateOrOld.Load(),
-		ackAdvanced:       c.ackAdvanced.Load(),
-		ackHigh:           c.ackHigh.Load(),
-		ackSent:           c.ackSent.Load(),
-		ackPrevLow16:      c.ackPrevLow16.Load(),
-		ackCurrentLow16:   c.ackCurrentLow16.Load(),
+		ackWatermark:        c.ackWatermark.Load(),
+		ackSeenPending:      c.ackSeenPending.Load(),
+		ackSeenRanges:       c.ackSeenRanges.Load(),
+		ackTrackingOverflow: c.ackTrackingOverflow.Load(),
+		ackDuplicateOrOld:   c.ackDuplicateOrOld.Load(),
+		ackAdvanced:         c.ackAdvanced.Load(),
+		ackHigh:             c.ackHigh.Load(),
+		ackSent:             c.ackSent.Load(),
+		ackPrevLow16:        c.ackPrevLow16.Load(),
+		ackCurrentLow16:     c.ackCurrentLow16.Load(),
 	}
 }
 

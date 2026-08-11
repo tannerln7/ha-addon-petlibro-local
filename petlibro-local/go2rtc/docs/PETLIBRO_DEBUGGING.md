@@ -94,6 +94,7 @@ ACK state. Focus on these groups:
 | `unknown0c08/unknown0c0d` | Remaining unparsed members of the common extended-media families |
 | `seqAssembled/seqUnhandled` | Recognized wire sequences delivered to assembly or seen but not handled |
 | `ack watermark/high/pending` | Highest contiguous receive sequence, highest observed sequence, and unresolved sequences above the watermark |
+| `ack ranges/overflow` | Compressed disjoint receive ranges retained above a hole, and positions omitted if the fixed range cap is exhausted |
 | `ack prev/current` | The actual low-16-bit fields most recently sent for the selected ACK mode |
 
 Healthy live behavior is not defined by one number, but these are useful signs:
@@ -105,6 +106,10 @@ Healthy live behavior is not defined by one number, but these are useful signs:
 - ACK watermark follows high-water with little or no pending backlog
 - the expected SPS transition is logged before probe selection when
   `hd_probe_wait_ms` is enabled
+
+The source URL written to go2rtc debug logs redacts the `uid` query value.
+Plaintext dump files can still contain device identifiers and must be handled as
+sensitive diagnostic artifacts.
 
 A repeating `stats: stalled` line with control-only packets means the session is
 alive but the camera is no longer sending media. Compare `watermark`, `high`,

@@ -52,6 +52,10 @@ Preserve these boundaries when modifying the implementation:
   preserve output liveness without changing the receive watermark.
 - ACK tracking happens after a media packet's real `subWire` is decoded and
   before assembly or drop decisions.
+- Received positions above an ACK hole are stored as consecutive ranges rather
+  than one map entry per packet. The range count is capped; `overflow` in the
+  five-second ACK stats reports positions omitted after that cap without
+  changing the ACK fields sent on the wire.
 - The receive loop decrypts each D2C datagram once. Plaintext capture records
   the same bytes passed to `parseDatagram`.
 - Normal and extended media headers feed the same assembly path only after

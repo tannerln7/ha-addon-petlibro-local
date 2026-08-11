@@ -128,6 +128,10 @@ class RenderConfigTests(unittest.TestCase):
             self.assertEqual(2, apps.count('petlibro_log_level: "info"'))
             self.assertNotIn("\n  log_level:", apps)
             self.assertIn('client_id: "petlibro_local_backend"', appdaemon)
+            self.assertIn(
+                "namespaces:\n    plaf203:\n      writeback: safe\n      persistent: true",
+                appdaemon,
+            )
             self.assertNotIn("example-password", registry)
             self.assertNotIn("example-user", registry)
             saved_device = json.loads(registry)["devices"]["PLAF203/EXAMPLE123"]

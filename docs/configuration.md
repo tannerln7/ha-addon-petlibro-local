@@ -60,6 +60,11 @@ behavior.
 Generated YAML and secrets files are written with mode 0600. Do not copy them
 into Git or attach them to public issues.
 
+The generated AppDaemon configuration explicitly marks the `plaf203` namespace
+as persistent with safe writeback. Feeding plans and the manual-feed portion
+default therefore survive an add-on restart; a reset feeder with no configured
+plan still starts with an empty backend plan and is not overwritten.
+
 ## Device discovery and overrides
 
 The coordinator builds `serial -> UID -> IP -> stream` from feeder MQTT traffic
