@@ -337,7 +337,7 @@ class PetlibroDiscovery(ADBase):
             self.mqtt.listen_event(
                 self._mqtt_device_event,
                 "MQTT_MESSAGE",
-                topic="dl/+/+/device/#",
+                wildcard="dl/+/+/device/#",
                 namespace="mqtt",
             )
         self.mqtt.listen_event(

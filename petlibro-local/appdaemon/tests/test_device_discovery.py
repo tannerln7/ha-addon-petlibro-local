@@ -49,6 +49,45 @@ def test_stream_name_sanitization_is_stable_and_safe():
     )
 
 
+def test_discovery_registers_mqtt_device_filter_as_wildcard():
+    class FakeAD:
+        def run_every(self, *_args, **_kwargs):
+            return "timer"
+
+    class FakeMQTT:
+        def __init__(self):
+            self.listeners = []
+
+        def listen_event(self, callback, event, **kwargs):
+            self.listeners.append((callback, event, kwargs))
+
+        def mqtt_publish(self, *_args, **_kwargs):
+            return None
+
+    with tempfile.TemporaryDirectory() as temporary:
+        coordinator = object.__new__(device_discovery.PetlibroDiscovery)
+        coordinator.args = {
+            "enabled": True,
+            "product_filter": "PLAF203",
+            "lan_cidr": "192.0.2.0/24",
+            "registry_file": str(Path(temporary) / "devices.json"),
+            "resolver_command": "petlibro-resolve",
+            "renderer_command": "petlibro-render-config",
+            "go2rtc_service": "/run/service/go2rtc",
+        }
+        fake_ad = FakeAD()
+        fake_mqtt = FakeMQTT()
+        coordinator.get_ad_api = lambda: fake_ad
+        coordinator.get_plugin_api = lambda _name: fake_mqtt
+
+        coordinator.initialize()
+
+    _callback, event, filters = fake_mqtt.listeners[0]
+    assert event == "MQTT_MESSAGE"
+    assert filters["wildcard"] == "dl/+/+/device/#"
+    assert "topic" not in filters
+
+
 def test_registry_is_atomic_private_and_excludes_credentials():
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "devices.json"

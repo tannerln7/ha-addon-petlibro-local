@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Fix automatic feeder discovery by registering the AppDaemon MQTT callback
+  with a wildcard filter, allowing concrete `dl/PLAF203/<serial>/device/...`
+  topics to reach the discovery coordinator.
+
 ## 0.2.0
 
 - Make discovery-first setup the default so users no longer need to configure
