@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.5
 
 - Stop copying the add-on-only `mqtt_host` into the physical feeder during
   startup. Endpoint persistence is now disabled by default and requires a
