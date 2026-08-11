@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
+- Make discovery-first setup the default so users no longer need to configure
+  a feeder serial, camera UID, or device IP for normal installations.
 - Discover feeder serials and camera UIDs from MQTT startup traffic.
 - Resolve and refresh device IP addresses with the existing LAN_SEARCH3 Go
   implementation, then persist a private device registry.
@@ -9,6 +11,8 @@
   for multiple discovered feeders.
 - Publish retained discovery readiness and restart go2rtc only when its
   generated configuration changes.
+- Keep legacy single-device settings and explicit per-device overrides as
+  compatibility fallbacks.
 
 ## 0.1.0
 
