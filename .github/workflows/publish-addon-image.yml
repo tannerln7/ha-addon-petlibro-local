@@ -24,12 +24,12 @@ jobs:
     outputs:
       architectures: ${{ steps.info.outputs.architectures }}
       build_matrix: ${{ steps.matrix.outputs.matrix }}
-      description: ${{ steps.info.outputs.description }}
+      description: ${{ steps.normalize.outputs.description }}
       image_name: ${{ steps.normalize.outputs.image_name }}
-      name: ${{ steps.info.outputs.name }}
+      name: ${{ steps.normalize.outputs.name }}
       registry_prefix: ${{ steps.normalize.outputs.registry_prefix }}
-      url: ${{ steps.info.outputs.url }}
-      version: ${{ steps.info.outputs.version }}
+      url: ${{ steps.normalize.outputs.url }}
+      version: ${{ steps.normalize.outputs.version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,10 +43,42 @@ jobs:
       - name: Normalize image coordinates
         id: normalize
         env:
-          IMAGE: ${{ steps.info.outputs.image }}
+          RAW_DESCRIPTION: ${{ steps.info.outputs.description }}
+          RAW_IMAGE: ${{ steps.info.outputs.image }}
+          RAW_NAME: ${{ steps.info.outputs.name }}
+          RAW_URL: ${{ steps.info.outputs.url }}
+          RAW_VERSION: ${{ steps.info.outputs.version }}
         run: |
-          echo "image_name=${IMAGE##*/}" >> "$GITHUB_OUTPUT"
-          echo "registry_prefix=${IMAGE%/*}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+
+          decode_required_string() {
+            jq -er 'select(type == "string" and length > 0)' <<< "$1"
+          }
+
+          image=$(decode_required_string "$RAW_IMAGE")
+          description=$(decode_required_string "$RAW_DESCRIPTION")
+          name=$(decode_required_string "$RAW_NAME")
+          version=$(decode_required_string "$RAW_VERSION")
+          url=$(jq -er 'if type == "string" then . elif . == null then "" else error("expected a string or null") end' <<< "$RAW_URL")
+
+          if [[ "$image" != */* ]]; then
+            echo "::error::Invalid image coordinate: $image"
+            exit 1
+          fi
+
+          image_name=${image##*/}
+          registry_prefix=${image%/*}
+
+          {
+            echo "description=$description"
+            echo "image_name=$image_name"
+            echo "name=$name"
+            echo "registry_prefix=$registry_prefix"
+            echo "url=$url"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Normalized image: ${registry_prefix}/<arch>-${image_name}:${version}"
 
       - name: Prepare build matrix
         id: matrix
