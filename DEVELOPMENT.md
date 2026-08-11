@@ -68,7 +68,8 @@ used by Docker Compose. It validates required values and atomically writes:
 - `/data/appdaemon-secrets.yaml`
 
 The AppDaemon secrets file and all generated configuration files are mode 0600.
-The product secret is never rendered because neither backend currently uses it.
+The backend does not accept the feeder product secret. Feeder broker account
+provisioning is external to this package.
 
 ## Updating imported components
 

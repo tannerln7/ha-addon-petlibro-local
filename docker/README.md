@@ -27,9 +27,10 @@ chmod 600 docker/.env
 Edit `docker/.env` and replace the generic values. `UID` must be exactly 20
 characters. The file is ignored by Git.
 
-`PRODUCT_SECRET` is accepted for future compatibility but is unused by this
-release and is not rendered into service configuration. Leave it empty unless a
-future documented workflow requires it.
+`MQTT_USERNAME` and `MQTT_PASSWORD` authenticate AppDaemon to the broker. The
+feeder uses its own factory/device MQTT account, which must be provisioned in
+the external broker separately; this backend does not accept or configure the
+feeder's product secret.
 
 ## Build and run
 

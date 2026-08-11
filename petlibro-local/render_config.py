@@ -24,7 +24,6 @@ DEFAULTS = {
     "product": "PLAF203",
     "serial": "",
     "uid": "",
-    "product_secret": "",
     "go2rtc_stream_name": "petlibro_feeder",
     "camera_quality": "hd",
     "ack_mode": "hybrid",
@@ -228,9 +227,6 @@ def main() -> int:
     try:
         options = load_options(data_dir)
         validate(options)
-        # product_secret is accepted for future provisioning work but neither
-        # imported backend consumes it. Deliberately do not render or export it.
-        _ = options["product_secret"]
         if args.component in {"all", "go2rtc"}:
             render_go2rtc(options, data_dir, template_dir)
         if args.component in {"all", "appdaemon"}:

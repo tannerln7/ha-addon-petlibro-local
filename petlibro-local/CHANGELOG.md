@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Fix container startup by relying on the Home Assistant base image's `/init`
+  entrypoint instead of passing a second `/init` argument.
+- Remove the unused product-secret option and document the separate feeder and
+  AppDaemon MQTT credential roles.
+- Clarify that an HD SPS transition can occur after the configured probe window.
+
 ## 0.1.0
 
 - Package patched go2rtc and the PLAF203 AppDaemon controller together.

@@ -15,7 +15,6 @@ users configure the same values in the ignored `docker/.env` file.
 | `product` | `PRODUCT` | Validation; currently PLAF203 only |
 | `serial` | `SERIAL` | PLAF203 MQTT topics and Home Assistant entity IDs |
 | `uid` | `UID` | go2rtc Petlibro camera session |
-| `product_secret` | `PRODUCT_SECRET` | Reserved; deliberately not propagated |
 | `go2rtc_stream_name` | `GO2RTC_STREAM_NAME` | go2rtc stream and RTSP URL |
 | `camera_quality` | `CAMERA_QUALITY` | Petlibro URL `quality` query |
 | `ack_mode` | `ACK_MODE` | Petlibro URL `ack` query |
@@ -48,8 +47,12 @@ into Git or attach them to public issues.
 ## Feeder connectivity
 
 This backend does not onboard the feeder, rewrite DNS, or configure the feeder's
-factory MQTT account. The feeder must already be connected to Wi-Fi and its MQTT
-hostname must resolve or route to the local broker. The AppDaemon MQTT account
-must be authorized to subscribe and publish on both the feeder's
+factory MQTT account. The feeder must already be connected to Wi-Fi, its MQTT
+hostname must resolve or route to the local broker, and its own username and
+product-secret-based password must be provisioned in that broker. Do not enter
+the feeder credential as the backend's MQTT password.
+
+The configured `mqtt_username` and `mqtt_password` authenticate AppDaemon. That
+account must be authorized to subscribe and publish on both the feeder's
 `dl/PLAF203/...` topics and the controller's Home Assistant discovery/command
 topics.

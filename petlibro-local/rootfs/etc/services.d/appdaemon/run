@@ -3,7 +3,7 @@
 set -euo pipefail
 
 /usr/local/bin/petlibro-local-run appdaemon
-unset MQTT_PASSWORD PRODUCT_SECRET
+unset MQTT_PASSWORD
 
 arguments=(-c /data)
 if [[ -f /data/.verbose_logs ]]; then

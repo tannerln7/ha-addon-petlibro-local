@@ -22,8 +22,9 @@ exposed here.
 - Stage: experimental
 
 The camera implementation has been validated with hybrid ACK behavior,
-`send_delay_ctrl`, alternate 44-byte media headers, and a delayed HD probe that
-reaches 1920x1080 on tested firmware.
+`send_delay_ctrl`, alternate 44-byte media headers, and delayed HD SPS
+transitions on tested firmware. A session can remain at 640x360 beyond the
+configured probe window before later producing 1920x1080 media.
 
 ## Home Assistant OS installation
 
@@ -85,11 +86,11 @@ debug dumps under `docker/data/`. See the
 
 ## Security
 
-- Keep `product_secret`, MQTT credentials, feeder serials, camera UIDs, and raw
+- Keep MQTT credentials, feeder serials, camera UIDs, product secrets, and raw
   protocol dumps out of Git and issue reports.
-- The current backends do not consume `product_secret`; it is retained as a
-  password-type option for future provisioning work and is deliberately not
-  rendered into generated files or child-process environments.
+- The feeder's product-secret-based MQTT credential belongs in the external
+  broker's device account. This backend does not provision that account;
+  `mqtt_username` and `mqtt_password` authenticate AppDaemon itself.
 - go2rtc's web/API and RTSP endpoints have no authentication in the generated
   configuration. Host networking makes them reachable from the host network;
   use a trusted VLAN and firewall access appropriately.

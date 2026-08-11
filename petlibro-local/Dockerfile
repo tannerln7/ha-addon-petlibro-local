@@ -38,5 +38,3 @@ LABEL \
     org.opencontainers.image.title="Petlibro Local backend" \
     org.opencontainers.image.description="Local PLAF203 MQTT control and camera streaming backend" \
     org.opencontainers.image.licenses="MIT"
-
-CMD ["/init"]

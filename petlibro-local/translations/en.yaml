@@ -23,9 +23,6 @@ configuration:
   uid:
     name: Camera UID
     description: Exact 20-character UID used for the local camera session.
-  product_secret:
-    name: Product secret
-    description: Reserved for future provisioning and not used by this release.
   go2rtc_stream_name:
     name: Stream name
     description: Name used in go2rtc and RTSP URLs.

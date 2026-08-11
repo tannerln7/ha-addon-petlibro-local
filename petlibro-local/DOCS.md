@@ -26,7 +26,9 @@ Startup fails with a configuration error until `device_ip`, `serial`, and
 | `mqtt_password` | empty | AppDaemon's broker password; stored in a mode-0600 secrets file |
 
 These credentials authenticate the backend to the broker. They do not provision
-the feeder or replace its factory-provisioned broker credentials.
+the feeder or replace its factory-provisioned broker credentials. The feeder's
+own username and product-secret-based password must be configured as a separate
+account in the external broker.
 
 ## Camera and go2rtc
 
@@ -41,9 +43,10 @@ the feeder or replace its factory-provisioned broker credentials.
 | `go2rtc_rtsp_port` | `8554` | RTSP TCP port |
 | `go2rtc_webrtc_port` | `8555` | WebRTC TCP/UDP port |
 
-The tested HD stream may first emit a 640x360 SPS and switch to 1920x1080 after
-several seconds. The default 15-second probe wait lets go2rtc advertise the
-higher resolution when that transition occurs.
+The tested HD stream may first emit a 640x360 SPS and switch to 1920x1080 later.
+The default 15-second probe wait advertises the higher resolution only when that
+transition occurs within the window. Some observed sessions transitioned after
+several minutes and were initially advertised as 640x360.
 
 ## Diagnostics
 
@@ -54,13 +57,6 @@ higher resolution when that transition occurs.
 
 Debug dumps may contain device and session data. Disable the option and delete
 the files after collecting the evidence needed for diagnosis.
-
-## Reserved secret
-
-`product_secret` is defined as a password field because it may be needed by a
-future provisioning workflow. The imported, working camera and MQTT backends do
-not consume it. The renderer therefore never writes it to generated files,
-URLs, logs, or child-process environments.
 
 ## Network exposure
 

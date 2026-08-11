@@ -26,7 +26,6 @@ class RenderConfigTests(unittest.TestCase):
             "product": "PLAF203",
             "serial": "YOUR_DEVICE_SERIAL",
             "uid": "PLAF20300000000ABCD0",
-            "product_secret": "must-not-be-rendered",
             "go2rtc_stream_name": "petlibro_feeder",
             "camera_quality": "hd",
             "ack_mode": "hybrid",
@@ -39,7 +38,7 @@ class RenderConfigTests(unittest.TestCase):
             "enable_debug_dumps": True,
         }
 
-    def test_renders_configs_without_product_secret(self):
+    def test_renders_configs_and_protects_mqtt_password(self):
         with tempfile.TemporaryDirectory() as temporary:
             data_dir = Path(temporary)
             source = data_dir / "plaf203.py"
@@ -63,7 +62,6 @@ class RenderConfigTests(unittest.TestCase):
                     data_dir / "appdaemon-secrets.yaml",
                 )
             )
-            self.assertNotIn("must-not-be-rendered", generated)
             self.assertIn("ack=hybrid", generated)
             self.assertIn("hd_probe_wait_ms=15000", generated)
             self.assertIn("dump_c2d_plain=%2Fdata%2Fpetlibro_c2d.dat", generated)
@@ -71,6 +69,38 @@ class RenderConfigTests(unittest.TestCase):
             self.assertEqual(
                 0o600, (data_dir / "appdaemon-secrets.yaml").stat().st_mode & 0o777
             )
+
+    def test_ignores_legacy_unknown_options(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            source = data_dir / "plaf203.py"
+            source.write_text("# synthetic app source\n", encoding="utf-8")
+            options = self.options()
+            options["product_secret"] = "legacy-value"
+            (data_dir / "options.json").write_text(
+                json.dumps(options), encoding="utf-8"
+            )
+
+            loaded = render_config.load_options(data_dir)
+            render_config.validate(loaded)
+            render_config.render_go2rtc(
+                loaded, data_dir, ROOT / "petlibro-local" / "templates"
+            )
+            with patch.dict(os.environ, {"PETLIBRO_APP_SOURCE": str(source)}):
+                render_config.render_appdaemon(
+                    loaded, data_dir, ROOT / "petlibro-local" / "templates"
+                )
+
+            generated = "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in (
+                    data_dir / "go2rtc.yaml",
+                    data_dir / "appdaemon.yaml",
+                    data_dir / "apps.yaml",
+                    data_dir / "appdaemon-secrets.yaml",
+                )
+            )
+            self.assertNotIn("legacy-value", generated)
 
     def test_loads_home_assistant_options_json(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -30,7 +30,6 @@ options:
   product: PLAF203
   serial: ""
   uid: ""
-  product_secret: ""
   go2rtc_stream_name: petlibro_feeder
   camera_quality: hd
   ack_mode: hybrid
@@ -50,7 +49,6 @@ schema:
   product: list(PLAF203)
   serial: str
   uid: str
-  product_secret: password
   go2rtc_stream_name: str
   camera_quality: list(hd|sd)
   ack_mode: list(high|contig|hybrid)
