@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2
+
+- Fix the first-heartbeat timestamp-drift error path so a controller callback
+  cannot crash before camera UID discovery and go2rtc configuration complete.
+- Prevent a newly initialized empty feeding-plan collection from being pushed
+  to the feeder on first contact, while preserving explicit schedule updates
+  and intentional schedule clearing.
+
 ## 0.2.1
 
 - Fix automatic feeder discovery by registering the AppDaemon MQTT callback
