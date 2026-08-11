@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.6
+
+- Apply sparse `ATTR_PUSH_EVENT` updates only to the settings groups actually
+  present, preventing feeder-reported camera-resolution changes from
+  republishing or clearing unrelated food, audio, recording, and detection
+  state.
+- Preserve absent food-state booleans and improve invalid feeding-plan JSON
+  diagnostics without logging the submitted schedule.
+- Clarify that the feeder-reported camera resolution is separate from the
+  active go2rtc stream resolution.
+- Add a writable Home Assistant bowl-configuration select backed by the
+  feeder's `bowlMode` attribute, while keeping scheduled and manual-feed
+  portion quantities unchanged.
+
 ## 0.2.5
 
 - Stop copying the add-on-only `mqtt_host` into the physical feeder during
