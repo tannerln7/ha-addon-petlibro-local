@@ -1269,7 +1269,7 @@ class FeedingPlanOut:
     audio_times: int
     grain_num: int
     sync_time: Timestamp
-    skip_end_time: str = None
+    skip_end_time: Optional[int] = None
 
 @dataclass
 class FeedingPlanServiceOut:
@@ -1330,7 +1330,7 @@ class GetFeedingPlanOut:
     audio_times: int
     grain_num: int
     sync_time: Timestamp
-    skip_end_time: Optional[str] = None
+    skip_end_time: Optional[int] = None
 
 @dataclass
 class GetFeedingPlanEventOut:

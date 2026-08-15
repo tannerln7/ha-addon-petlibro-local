@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0
+
+- Add the maintained feeder-resident State Agent source and replace the
+  observational decoder with the audited 236-byte `state.bin`, 47-byte plan,
+  and 51-slot feed-event queue layouts.
+- Classify feeder fields as persistent, effective-cached, or runtime and verify
+  writable controls only against persistent switch/configuration fields.
+- Correct sound verification to `sound_switch` at offset `0x21`, decode
+  unaligned multi-byte camera/detection fields at full width, and expose raw
+  minute durations without enum assumptions.
+- Preserve stable feeding-plan protocol/opaque fields while excluding runtime
+  execution state and regenerated target sync metadata from schedule equality.
+- Describe `/v1/feed-events` as a pending store-and-forward queue rather than
+  durable feeding history.
+
 ## 0.2.9
 
 - Acknowledge sparse `ATTR_PUSH_EVENT` messages before processing optional

@@ -11,6 +11,7 @@ historical snapshots only.
 |---|---|
 | `petlibro-local/go2rtc/` | Patched go2rtc source and Petlibro camera protocol |
 | `petlibro-local/appdaemon/` | PLAF203 AppDaemon MQTT controller |
+| `feeder-state-agent/` | Authenticated read-only feeder-resident state decoder/API |
 | `petlibro-local/` | Home Assistant add-on metadata, image, templates, and services |
 | `docker/` | Host-network Docker Compose fallback |
 | `scripts/` | Build, run, stream-test, log collection, and validation helpers |
@@ -24,6 +25,7 @@ former repositories.
 - Go 1.24 or newer for the imported go2rtc module
 - Python 3.12 or newer
 - Docker with Compose for image validation and local runtime testing
+- A C99 compiler for the host State Agent build and decoder regression tests
 - FFmpeg for `scripts/test-stream.sh`
 
 Create a Python environment for the controller tests:
@@ -43,7 +45,8 @@ Run the complete local validation suite:
 ```
 
 The script validates shell and Python syntax, configuration rendering,
-AppDaemon protocol tests when its dependency is installed, the Petlibro Go
+the feeder State Agent host build, AppDaemon protocol tests when its dependency
+is installed, the Petlibro Go
 package, the complete go2rtc build, Compose interpolation, whitespace, and
 tracked-file hygiene.
 
@@ -126,6 +129,14 @@ bounded TCP reachability checks before sending `DEVICE_CONFIG_SYNC`.
 feeder truth API. Keep its errors sanitized, its bearer token private, and its
 response models explicit. Calls belong in AppDaemon's executor, never the main
 callback thread.
+
+`feeder-state-agent/plaf203_state_agent.c` owns the binary decoder and HTTP
+schema. It must read only allowlisted files, require the exact 236-byte
+`state.bin`, parse unaligned integers explicitly as little-endian, and derive
+decoded values plus revisions from the same per-request buffers. Preserve the
+`persistent`, `effective_cached`, and `runtime` distinction: only persistent
+fields may verify a setting command. Its feed-event endpoint represents the
+firmware's pending outbound ring, not durable history.
 
 `appdaemon/src/state_coordinator.py` is the only owner of persistent feeder
 truth, revisions, pending writes, and plan collections. Do not reintroduce a

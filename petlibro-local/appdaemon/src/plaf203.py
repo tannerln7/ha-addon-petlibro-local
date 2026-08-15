@@ -98,6 +98,7 @@ class Plaf203(adbase.ADBase):
             self.storage,
             self.state,
             self.logger,
+            raw_settings_diagnostics=self.logger.enabled("debug"),
         )
         self.commands.restore_local_preferences()
         self.commands.start()

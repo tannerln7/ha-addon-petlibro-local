@@ -36,6 +36,10 @@ else
     printf 'Skipping AppDaemon controller tests: install petlibro-local/appdaemon/requirements-dev.txt\n'
 fi
 
+cc -Os -Wall -Wextra -std=c99 \
+    -o /tmp/plaf203-state-agent \
+    feeder-state-agent/plaf203_state_agent.c
+
 (
     cd petlibro-local/go2rtc
     go test ./pkg/petlibro -count=1

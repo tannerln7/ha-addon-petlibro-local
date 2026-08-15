@@ -63,6 +63,11 @@ verified `/v1/core` model and revisions, projects that truth into Home
 Assistant under a writeback-suppression guard, and serializes persistent
 writes.
 
+The feeder agent classifies decoded `state.bin` fields as persistent
+configuration, effective cached state, or runtime telemetry. Persistent switch
+bytes are authoritative for command verification. Adjacent firmware-calculated
+`enableX` cache bytes remain diagnostic only even when they happen to agree.
+
 ```mermaid
 stateDiagram-v2
     [*] --> DISCONNECTED
@@ -86,9 +91,16 @@ of promoting retained Home Assistant state.
 
 Feeding plans have no second cache in `Backend` or AppDaemon storage. Every
 edit starts with a fresh core preflight and is sent as a full collection. The
-target plan changes only in time, weekdays, and portions; opaque raw fields and
-all non-target plans are preserved and included in post-ack collection
-verification.
+target plan changes only in time, weekdays, portions, derived one-shot state,
+and its per-update `syncTime`. Runtime `execution_state` and regenerated sync
+metadata are excluded from schedule equality. `skip_end_time`, audio transport
+fields, the opaque ten-byte tail, and all non-target plans are preserved and
+included in post-ack collateral-mutation checks.
+
+`/v1/feed-events` is a view of the feeder's 51-slot store-and-forward MQTT
+queue. Each logical slot contains START, END, and BLOCKING subrecords. Firmware
+clears acknowledged entries, so this endpoint is operational queue state and
+must never be presented as durable feeding history.
 
 The AppDaemon implementation follows the same boundaries in code:
 
@@ -100,9 +112,10 @@ The AppDaemon implementation follows the same boundaries in code:
 | `mqtt_client.py` / `protocol.py` | Feeder MQTT transport and wire schemas |
 | `backend.py` | Protocol lifecycle, commands, acknowledgements, and telemetry callbacks |
 | `settings_map.py` / `commands.py` | Declarative HA/semantic/wire mappings and user command routing |
-| `feed_plans.py` | Plan parsing, opaque-field preservation, serialization, and display projection |
+| `feed_plans.py` | Plan parsing, typed protocol serialization, and display projection |
 | `ha_entities.py` / `telemetry.py` | MQTT discovery, verified-state mirroring, and operational telemetry |
 | `storage.py` | Local manual-feed preference and stale diagnostics, never feeder truth |
+| `feeder-state-agent/` | Strict binary decoder and feeder-resident read-only API |
 
 ### Discovery coordinator
 

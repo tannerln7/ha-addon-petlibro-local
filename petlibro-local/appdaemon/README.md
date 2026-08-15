@@ -36,11 +36,11 @@ Known limitations:
 - Camera/audio streaming is outside this AppDaemon integration. Local streaming
   is provided by the [bundled Petlibro go2rtc backend](../go2rtc/).
 - An unreachable feeding-audio URL can cause some feeder firmware to restart.
-- The button auto-lock controls and recorded SD-card video format are not fully
-  understood.
-- The feeder state API does not yet expose feeding-audio URL or auto-lock
-  threshold state, so those two persistent writes are blocked rather than
-  treated as successful from an MQTT acknowledgement alone.
+- The `autoChangeMode` / `autoThreshold` product behavior and recorded SD-card
+  video format are not fully understood. Their Home Assistant labels avoid the
+  earlier unsupported "button lock" claim.
+- The state API exposes the feeding-audio URL, but writing it remains blocked:
+  tested firmware can restart when the destination is unreachable.
 
 ## Prerequisites
 
@@ -55,6 +55,11 @@ Known limitations:
 The feeder uses factory-provisioned MQTT credentials. Keep it on a trusted or
 isolated network, do not publish those credentials, and do not commit packet
 captures or AppDaemon configuration containing a real device serial.
+
+Use the matching State Agent 0.2.0 source under
+[`../../feeder-state-agent`](../../feeder-state-agent/). Older agent schemas do
+not expose the persistent/effective/runtime distinction needed for safe write
+verification.
 
 ## Installation
 
@@ -156,9 +161,12 @@ location and payload length without logging the schedule itself.
 
 On startup, the controller reads `/v1/core` and publishes the feeder's local
 plans to Home Assistant without writeback. For every edit it reads a fresh
-collection, changes only time/days/portions, and preserves the API's opaque
-`enabled_raw` and `bowl_or_target_raw` values. It then sends the full collection
-and verifies the complete result through `/v1/core` after the MQTT ack. Stored
+collection, changes only time/days/portions, carries the API's audio fields and
+`skip_end_time` through the MQTT schema, and retains the ten-byte opaque tail
+for collateral-mutation verification. The edited plan receives a fresh
+`syncTime`; runtime `execution_state` and sync metadata are excluded from
+schedule equality. It then sends the full collection and verifies the stable
+result through `/v1/core` after the MQTT ack. Stored
 or retained Home Assistant plan JSON is never a command source. If the API is
 unavailable or verification disagrees, feeder-local state wins.
 

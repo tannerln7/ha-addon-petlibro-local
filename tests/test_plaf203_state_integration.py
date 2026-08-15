@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import backend as backend_module
 import commands as command_module
@@ -127,6 +128,40 @@ def test_persistent_setting_command_map_is_unambiguous():
     assert all(spec.state_field for spec in SETTING_COMMANDS)
 
 
+def test_switch_commands_verify_binary_backed_persistent_fields():
+    by_control = {spec.control: spec.state_field for spec in SETTING_COMMANDS}
+
+    assert by_control["sound.enable"] == "sound_switch"
+    assert by_control["button_lights.enable"] == "light_switch"
+    assert by_control["camera.enable"] == "camera_switch"
+    assert by_control["recording.enable"] == "video_record_switch"
+    assert by_control["motion_detection.enable"] == "motion_detection_switch"
+    assert by_control["sound_detection.enable"] == "sound_detection_switch"
+    assert by_control["audio.enable"] == "feeding_audio_enabled"
+    assert "sound_effective_cached" not in by_control.values()
+
+
+def test_sound_setting_enables_raw_preflight_diagnostics_only_when_configured():
+    router = object.__new__(command_module.CommandRouter)
+    router.coordinator = CapturingCoordinator()
+    router.logger = Logger()
+    router.backend = object()
+    router.raw_settings_diagnostics = True
+    sound_spec = next(
+        spec for spec in SETTING_COMMANDS if spec.control == "sound.enable"
+    )
+
+    router._setting_handler(sound_spec)(
+        "MQTT_MESSAGE",
+        {"payload": "true", "retain": False},
+        {},
+    )
+
+    request = router.coordinator.requests[0]
+    assert request.requires_fresh_preflight
+    assert request.raw_settings_diagnostics
+
+
 def test_retained_plan_command_is_not_treated_as_user_intent():
     router = object.__new__(command_module.CommandRouter)
     router.logger = Logger()
@@ -152,7 +187,7 @@ def test_backend_has_no_authoritative_plan_cache_api():
     assert not hasattr(backend_module.Backend, "food_plans_set")
 
 
-def test_mqtt_plan_adapter_round_trips_opaque_fields_for_full_collection():
+def test_mqtt_plan_adapter_serializes_full_collection_protocol_metadata():
     backend = backend_module.Backend()
     backend.client = CapturingClient()
     truth = FeederTruth.from_dict(core_payload())
@@ -165,23 +200,34 @@ def test_mqtt_plan_adapter_round_trips_opaque_fields_for_full_collection():
     assert message["plans"][0]["enableAudio"] is True
     assert message["plans"][0]["audioTimes"] == 2
     assert message["plans"][0]["grainNum"] == 10
+    assert message["plans"][0]["syncTime"] == 1_700_000_000_000
+    assert "skipEndTime" not in message["plans"][0]
 
-    disabled_truth = FeederTruth.from_dict(core_payload(enabled_raw=0))
+    skipped_plan = replace(
+        truth.plans.semantic_records[0], skip_end_time=1_700_000_100_000
+    )
+    backend.feeding_plans_send((skipped_plan,))
+    assert (
+        backend.client.plan_messages[1]["plans"][0]["skipEndTime"]
+        == 1_700_000_100_000
+    )
+
+    disabled_truth = FeederTruth.from_dict(core_payload(enable_audio_raw=0))
     backend.feeding_plans_send(disabled_truth.plans.semantic_records)
-    assert backend.client.plan_messages[1]["plans"][0]["enableAudio"] is False
+    assert backend.client.plan_messages[2]["plans"][0]["enableAudio"] is False
 
 
-def test_mqtt_plan_adapter_rejects_unknown_enabled_raw_value():
+def test_mqtt_plan_adapter_rejects_unknown_enable_audio_raw_value():
     backend = backend_module.Backend()
     backend.client = CapturingClient()
-    invalid_truth = FeederTruth.from_dict(core_payload(enabled_raw=2))
+    invalid_truth = FeederTruth.from_dict(core_payload(enable_audio_raw=2))
 
     try:
         backend.feeding_plans_send(invalid_truth.plans.semantic_records)
     except ValueError as error:
-        assert "enabled_raw" in str(error)
+        assert "enable_audio_raw" in str(error)
     else:
-        raise AssertionError("unsupported enabled_raw reached MQTT")
+        raise AssertionError("unsupported enable_audio_raw reached MQTT")
 
     assert backend.client.plan_messages == []
 

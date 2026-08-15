@@ -83,6 +83,12 @@ agent. The renderer places it in the mode-0600 AppDaemon secrets file and
 references it with `!secret`; application logs never include it. The default
 request timeout is two seconds.
 
+The backend requires the tracked State Agent 0.2.0 schema. That agent rejects
+any `state.bin` whose length is not exactly 236 bytes and labels decoded fields
+as `persistent`, `effective_cached`, or `runtime`. Only persistent fields can
+complete a setting verification; firmware-calculated cached enable flags and
+runtime telemetry cannot.
+
 On a feeder startup event or first heartbeat, the controller reads `/v1/core`
 before accepting a persistent write. It then mirrors feeder settings and
 semantic plan records into Home Assistant. Subsequent heartbeats use `/v1/rev`
@@ -103,11 +109,14 @@ An edit is supported only for a plan ID already present in
 `/v1/core.plans.semantic_records`; plan add/delete is not currently exposed.
 Before every plan command the controller performs a fresh `/v1/core` preflight
 and builds one full-collection MQTT payload from that response. It mutates only
-the requested UTC hour, minute, weekday set, and portions. The opaque
-`enabled_raw` and `bowl_or_target_raw` values pass through unchanged; at the
-wire boundary only, `enabled_raw` values `0` and `1` become booleans and
-`bowl_or_target_raw` occupies the existing `audioTimes` field. Other
-`enabled_raw` values are rejected.
+the requested UTC hour, minute, weekday set, portions, derived one-shot flag,
+and the target record's update timestamp. `enable_audio_raw` passes through as
+the existing `enableAudio` field and must be 0 or 1; `audio_times` passes
+through unchanged. The 64-bit `skip_end_time` is sent through the protocol. The
+ten-byte opaque tail remains in the coordinator's cloned truth model and must
+remain unchanged in the post-write readback; the current MQTT schema has no
+field that exposes it. Runtime `execution_state` and regenerated `sync_time`
+are excluded from semantic schedule equality.
 
 After the acknowledgement, verification requires the same plan count and IDs,
 the requested target change, unchanged target opaque fields, and byte-semantic
@@ -115,12 +124,13 @@ equivalence of every non-target record. `GET_FEEDING_PLAN_EVENT` also performs
 a fresh core read. If it fails, the controller sends the protocol error form
 with no plans instead of fabricating a schedule.
 
-The current state-agent schema does not expose the feeding-audio URL or the
-button auto-lock threshold. Their existing Home Assistant entities remain for
-contract compatibility, but writes are blocked with an actionable warning
-rather than being acknowledged without local verification. Manual feeding is
-an action and continues to use its MQTT acknowledgement/event path instead of
-expecting a persistent `/v1/core` change. Explicit feeder MQTT endpoint
+The state API exposes `audio_url`, but audio URL writes remain blocked because
+tested firmware can restart when given an unreachable URL. The former
+"automatic button lock" controls keep their MQTT entity IDs for compatibility,
+but now mirror the binary-backed `auto_change_mode` and `auto_threshold`
+configuration fields without claiming an unproven lock meaning. Manual feeding
+is an action and continues to use its MQTT acknowledgement/event path instead
+of expecting a persistent `/v1/core` change. Explicit feeder MQTT endpoint
 persistence remains a separately gated recovery operation and is reported as
 acknowledged-but-not-locally-verifiable because `/v1/core` does not expose
 endpoint configuration.

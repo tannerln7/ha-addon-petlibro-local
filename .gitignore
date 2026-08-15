@@ -34,6 +34,7 @@ tmp/
 *.dat
 *.tar.gz
 docker/data/
+/feeder-state-agent/plaf203-state-agent
 
 # Local configuration and secrets
 **/go2rtc.yaml

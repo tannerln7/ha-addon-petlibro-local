@@ -17,6 +17,7 @@ from state_agent import (
     RevisionSnapshot,
     StateAgentClient,
     StateAgentError,
+    diff_settings_raw,
 )
 
 
@@ -69,7 +70,10 @@ class SettingEqualsPredicate:
     expected: object
 
     def matches(self, truth: FeederTruth) -> bool:
-        return truth.settings.get(self.field) == self.expected
+        return (
+            truth.settings.is_persistent(self.field)
+            and truth.settings.get(self.field) == self.expected
+        )
 
     def expected_description(self) -> str:
         return f"{self.field}={self.expected!r}"
@@ -122,17 +126,19 @@ class PlanCollectionPredicate:
             expected_plan = expected_by_id[plan_id]
             if plan_id != self.target_plan_id:
                 if (
-                    baseline_plan.semantic_fingerprint()
-                    != expected_plan.semantic_fingerprint()
+                    baseline_plan.stable_fingerprint()
+                    != expected_plan.stable_fingerprint()
                 ):
                     raise ValueError("non-target feeding plan was mutated")
                 continue
             if (
-                baseline_plan.enabled_raw != expected_plan.enabled_raw
-                or baseline_plan.bowl_or_target_raw
-                != expected_plan.bowl_or_target_raw
+                baseline_plan.enable_audio_raw
+                != expected_plan.enable_audio_raw
+                or baseline_plan.audio_times != expected_plan.audio_times
+                or baseline_plan.skip_end_time != expected_plan.skip_end_time
+                or baseline_plan.opaque_hex != expected_plan.opaque_hex
             ):
-                raise ValueError("target feeding-plan opaque fields were mutated")
+                raise ValueError("target feeding-plan preserved fields were mutated")
 
     def matches(self, truth: FeederTruth) -> bool:
         actual = truth.plans.semantic_records
@@ -143,8 +149,8 @@ class PlanCollectionPredicate:
         if set(expected_by_id) != set(actual_by_id):
             return False
         return all(
-            actual_by_id[plan_id].semantic_fingerprint()
-            == expected_plan.semantic_fingerprint()
+            actual_by_id[plan_id].stable_fingerprint()
+            == expected_plan.stable_fingerprint()
             for plan_id, expected_plan in expected_by_id.items()
         )
 
@@ -164,6 +170,7 @@ class PersistentWriteRequest:
     verification_mode: VerificationMode = VerificationMode.FULL
     command_summary: str = ""
     requires_fresh_preflight: bool = False
+    raw_settings_diagnostics: bool = False
     plan_patch: PlanPatch | None = None
 
 
@@ -403,7 +410,10 @@ class FeederStateCoordinator:
             preflight=request.requires_fresh_preflight,
         )
         if request.requires_fresh_preflight:
-            self._submit_agent_call("core", "write_preflight")
+            self._submit_agent_call(
+                "core_raw" if request.raw_settings_diagnostics else "core",
+                "write_preflight",
+            )
         else:
             self._publish_pending(self._latest_truth)
 
@@ -500,7 +510,10 @@ class FeederStateCoordinator:
         if self._operation_token is not None:
             self._schedule_verification(pending.retry_count)
             return
-        self._submit_agent_call("core", "verify")
+        self._submit_agent_call(
+            "core_raw" if pending.request.raw_settings_diagnostics else "core",
+            "verify",
+        )
 
     def _submit_agent_call(self, method_name: str, purpose: str) -> None:
         if self._operation_token is not None:
@@ -532,6 +545,8 @@ class FeederStateCoordinator:
 
     def _agent_worker(self, method_name: str) -> _AgentCallResult:
         try:
+            if method_name == "core_raw":
+                return _AgentCallResult(value=self.state_agent.core(raw=True))
             method = getattr(self.state_agent, method_name)
             return _AgentCallResult(value=method())
         except StateAgentError as exc:
@@ -647,6 +662,7 @@ class FeederStateCoordinator:
         pending.last_observed_truth = value
         predicate = pending.predicate
         if predicate is not None and predicate.matches(value):
+            self._log_raw_settings_diff(pending, value)
             if not self._commit_verified_truth(value):
                 self._complete_failed_write(
                     "write persisted but HA truth projection failed",
@@ -682,6 +698,7 @@ class FeederStateCoordinator:
         actual_truth = pending.last_observed_truth
         self._transition(FeederState.DIVERGED, reason)
         if actual_truth is not None:
+            self._log_raw_settings_diff(pending, actual_truth)
             predicate = pending.predicate
             self.logger.warning(
                 "persistent feeder state diverged",
@@ -707,6 +724,32 @@ class FeederStateCoordinator:
             self._start_next_write()
         else:
             self._complete_failed_write(reason, degraded=api_failure)
+
+    def _log_raw_settings_diff(
+        self, pending: PendingWrite, actual_truth: FeederTruth
+    ) -> None:
+        if (
+            not pending.request.raw_settings_diagnostics
+            or pending.baseline_truth is None
+        ):
+            return
+        changes = []
+        for field_name, (before, after) in diff_settings_raw(
+            pending.baseline_truth.settings_raw,
+            actual_truth.settings_raw,
+        ).items():
+            if not _numeric_or_none(before) or not _numeric_or_none(after):
+                continue
+            changes.append({
+                "field": field_name,
+                "before": before,
+                "after": after,
+            })
+        self.logger.debug(
+            "persistent write raw settings diff",
+            control=pending.request.control,
+            changes=changes,
+        )
 
     def _handle_plan_snapshot(self, value: object) -> None:
         if not isinstance(value, FeederTruth):
@@ -835,7 +878,14 @@ class FeederStateCoordinator:
             self.pending_write is not None
             and self.pending_write.stage == PendingStage.PREPARING
         ):
-            self._submit_agent_call("core", "write_preflight")
+            self._submit_agent_call(
+                (
+                    "core_raw"
+                    if self.pending_write.request.raw_settings_diagnostics
+                    else "core"
+                ),
+                "write_preflight",
+            )
             return
         if self._plan_snapshot_callbacks and self.pending_write is None:
             self._submit_agent_call("core", "plan_snapshot")
@@ -886,6 +936,12 @@ class FeederStateCoordinator:
             )
 
 
+def _numeric_or_none(value: object) -> bool:
+    return value is None or (
+        isinstance(value, (int, float)) and not isinstance(value, bool)
+    )
+
+
 def build_patched_plan_collection(
     baseline: tuple[FeederPlan, ...], patch: PlanPatch
 ) -> tuple[FeederPlan, ...]:
@@ -904,9 +960,15 @@ def build_patched_plan_collection(
                 plan,
                 hour_utc=patch.hour_utc,
                 minute=patch.minute,
+                one_shot=not patch.days_raw,
+                one_shot_raw=1 if not patch.days_raw else 0,
                 time_utc=f"{patch.hour_utc:02d}:{patch.minute:02d}",
                 days_raw=tuple(sorted(patch.days_raw)),
                 portions=patch.portions,
+                # syncTime is the firmware's per-plan update marker. Regenerate
+                # it only for the target record; verification deliberately
+                # excludes it from schedule equality.
+                sync_time=max(plan.sync_time + 1, int(time.time() * 1000)),
             )
         )
     return tuple(expected)
@@ -914,11 +976,11 @@ def build_patched_plan_collection(
 
 def validate_plan_transport_fields(plans: tuple[FeederPlan, ...]) -> None:
     for plan in plans:
-        if plan.enabled_raw not in {0, 1}:
+        if plan.enable_audio_raw not in {0, 1}:
             raise ValueError(
-                f"feeding plan {plan.id} has unsupported enabled_raw value"
+                f"feeding plan {plan.id} has unsupported enable_audio_raw value"
             )
 
 
 def _plan_collection_description(plans: tuple[FeederPlan, ...]) -> str:
-    return repr([plan.semantic_fingerprint() for plan in plans])
+    return repr([plan.stable_fingerprint() for plan in plans])

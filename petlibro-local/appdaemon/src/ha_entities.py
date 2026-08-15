@@ -104,8 +104,8 @@ class HomeAssistantDiscoveryMqtt:
         self._ha_switch_config_publish('Button lights', 'mdi:lightbulb', 'button_lights', 'enable', 'config')
         self._ha_select_config_publish('Button lights schedule mode', 'mdi:lightbulb', 'button_lights', 'aging_type', [ AgingType.NON_SCHEDULED_ENABLED.name , AgingType.SCHEDULED_ENABLED.name ], 'config', schedule_labels)
 
-        self._ha_switch_config_publish('Automatic button lock', 'mdi:lock', 'buttons_auto_lock', 'enable', 'config')
-        self._ha_number_slider_config_publish('Button lock threshold', 'mdi:lock', 'buttons_auto_lock', 'threshold', 0, 100, 'config')
+        self._ha_switch_config_publish('Automatic change mode', 'mdi:auto-fix', 'buttons_auto_lock', 'enable', 'config')
+        self._ha_number_slider_config_publish('Automatic change threshold', 'mdi:tune', 'buttons_auto_lock', 'threshold', 0, 100, 'config')
 
         self._ha_sensor_config_publish('Battery level', 'mdi:battery', 'power', 'battery_level', unit_of_measurement='%')
         self._ha_sensor_config_publish('Active power source', 'mdi:power-plug-battery', 'power', 'mode', value_labels={

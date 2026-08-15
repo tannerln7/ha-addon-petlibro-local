@@ -29,6 +29,7 @@ class CommandRouter:
         storage: Storage,
         state: HomeAssistantStatePublisher,
         logger,
+        raw_settings_diagnostics: bool = False,
     ):
         self.mqtt = mqtt
         self.serial_number = serial_number
@@ -37,13 +38,12 @@ class CommandRouter:
         self.storage = storage
         self.state = state
         self.logger = logger
+        self.raw_settings_diagnostics = raw_settings_diagnostics
 
     def start(self) -> None:
         for spec in SETTING_COMMANDS:
             self._subscribe(spec.topic, self._setting_handler(spec))
         self._subscribe("audio/cmd/file_url", self._unsupported("audio.file_url"))
-        # Keep the historical misspelled topic because it is part of the HA entity ID contract.
-        self._subscribe("buttons_auto_lock/cmd/thresold", self._unsupported("buttons_auto_lock.threshold"))
         for slot in range(1, 10):
             self._subscribe(f"food/cmd/plan_{slot}", self.plan_handler(slot))
         self._subscribe("food/cmd/manual_feed_grain_num", self._manual_feed_amount)
@@ -126,6 +126,10 @@ class CommandRouter:
                     error_type=type(error).__name__,
                 )
                 return
+            raw_settings_diagnostics = (
+                getattr(self, "raw_settings_diagnostics", False)
+                and spec.control == "sound.enable"
+            )
             self.coordinator.request_persistent_write(
                 PersistentWriteRequest(
                     control=spec.control,
@@ -133,6 +137,8 @@ class CommandRouter:
                     publisher=lambda _truth: spec.publisher(self.backend, target),
                     predicate=SettingEqualsPredicate(spec.state_field, expected),
                     command_summary=spec.control,
+                    requires_fresh_preflight=raw_settings_diagnostics,
+                    raw_settings_diagnostics=raw_settings_diagnostics,
                 )
             )
 

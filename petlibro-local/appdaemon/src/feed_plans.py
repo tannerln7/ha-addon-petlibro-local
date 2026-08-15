@@ -56,9 +56,8 @@ def parse_plan_patch(raw_payload: object, plan_slot: int) -> PlanPatch:
 def build_plan_service(plans: tuple[FeederPlan, ...]) -> FeedingPlanServiceOut:
     """Serialize a complete feeder-truth plan collection for a write."""
 
-    timestamp = Timestamp.now()
     return FeedingPlanServiceOut.create([
-        _wire_plan(plan, timestamp, FeedingPlanOut) for plan in plans
+        _wire_plan(plan, FeedingPlanOut) for plan in plans
     ])
 
 
@@ -68,13 +67,12 @@ def build_plan_response(
 ) -> GetFeedingPlanEventOut:
     """Build a fresh-truth response, or an explicit protocol error."""
 
-    timestamp = Timestamp.now()
     wire_plans = [] if plans is None else [
-        _wire_plan(plan, timestamp, GetFeedingPlanOut) for plan in plans
+        _wire_plan(plan, GetFeedingPlanOut) for plan in plans
     ]
     return GetFeedingPlanEventOut(
         message_id=request.message_id,
-        timestamp=timestamp,
+        timestamp=Timestamp.now(),
         code=Code.OK if plans is not None else Code.ERROR_1,
         plans=wire_plans,
     )
@@ -99,10 +97,10 @@ def plan_state_payload(plan: FeederPlan) -> dict[str, object]:
     }
 
 
-def _wire_plan(plan: FeederPlan, timestamp: Timestamp, wire_type):
-    if plan.enabled_raw not in {0, 1}:
+def _wire_plan(plan: FeederPlan, wire_type):
+    if plan.enable_audio_raw not in {0, 1}:
         raise ValueError(
-            f"feeding plan {plan.id} has unsupported enabled_raw"
+            f"feeding plan {plan.id} has unsupported enable_audio_raw"
         )
     return wire_type(
         plan_id=plan.id,
@@ -110,8 +108,9 @@ def _wire_plan(plan: FeederPlan, timestamp: Timestamp, wire_type):
             plan.hour_utc, plan.minute
         ),
         repeat_day=WeekdaySchedule({Weekday(day) for day in plan.days_raw}),
-        enable_audio=bool(plan.enabled_raw),
-        audio_times=plan.bowl_or_target_raw,
+        enable_audio=bool(plan.enable_audio_raw),
+        audio_times=plan.audio_times,
         grain_num=plan.portions,
-        sync_time=timestamp,
+        sync_time=Timestamp.from_timestamp_epoch_ms(plan.sync_time),
+        skip_end_time=(plan.skip_end_time or None),
     )

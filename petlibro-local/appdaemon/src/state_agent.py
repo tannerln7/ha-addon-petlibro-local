@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import enum
 import json
 import socket
 from typing import Any, Mapping
@@ -30,6 +31,14 @@ class StateAgentBadResponse(StateAgentError):
 
 class StateAgentTimeout(StateAgentError):
     pass
+
+
+class SettingClass(enum.Enum):
+    """Binary-backed authority class for a decoded state.bin field."""
+
+    PERSISTENT = "persistent"
+    EFFECTIVE_CACHED = "effective_cached"
+    RUNTIME = "runtime"
 
 
 @dataclass(frozen=True)
@@ -84,17 +93,42 @@ class FeederQueue:
 @dataclass(frozen=True)
 class FeederSettings:
     values: Mapping[str, object]
+    classes: Mapping[str, SettingClass] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: object) -> "FeederSettings":
+    def from_dict(
+        cls, data: object, classes_data: object = None
+    ) -> "FeederSettings":
         obj = _object(data, "settings")
-        return cls(values=dict(obj))
+        classes_obj = _optional_object(classes_data, "setting_classes")
+        classes: dict[str, SettingClass] = {}
+        for setting_class in SettingClass:
+            names = classes_obj.get(setting_class.value, [])
+            if not isinstance(names, list) or not all(
+                isinstance(name, str) and name for name in names
+            ):
+                raise StateAgentBadResponse(
+                    f"setting_classes.{setting_class.value} must be an array of strings"
+                )
+            for name in names:
+                if name in classes:
+                    raise StateAgentBadResponse(
+                        f"setting class is duplicated for {name}"
+                    )
+                classes[name] = setting_class
+        return cls(values=dict(obj), classes=classes)
 
     def get(self, key: str, default: object = None) -> object:
         return self.values.get(key, default)
 
     def __getitem__(self, key: str) -> object:
         return self.values[key]
+
+    def classification(self, key: str) -> SettingClass | None:
+        return self.classes.get(key)
+
+    def is_persistent(self, key: str) -> bool:
+        return self.classification(key) is SettingClass.PERSISTENT
 
     def to_dict(self) -> dict[str, object]:
         return dict(self.values)
@@ -105,13 +139,19 @@ class FeederPlan:
     id: int
     minute: int
     hour_utc: int
+    one_shot: bool
+    one_shot_raw: int
     time_utc: str
     time_local_candidate: str
     days_raw: tuple[int, ...]
     days: tuple[str, ...]
     portions: int
-    enabled_raw: int
-    bowl_or_target_raw: int
+    enable_audio_raw: int
+    audio_times: int
+    execution_state: int
+    sync_time: int
+    skip_end_time: int
+    opaque_hex: str
 
     @classmethod
     def from_dict(cls, data: object, index: int) -> "FeederPlan":
@@ -134,9 +174,13 @@ class FeederPlan:
             for day_index, value in enumerate(days_obj)
         )
         return cls(
-            id=_integer(obj.get("id"), f"{name}.id", 1, 255),
+            id=_integer(obj.get("id"), f"{name}.id", 1, 0xFFFFFFFF),
             minute=_integer(obj.get("minute"), f"{name}.minute", 0, 59),
             hour_utc=_integer(obj.get("hour_utc"), f"{name}.hour_utc", 0, 23),
+            one_shot=_boolean(obj.get("one_shot"), f"{name}.one_shot"),
+            one_shot_raw=_integer(
+                obj.get("one_shot_raw"), f"{name}.one_shot_raw", 0, 255
+            ),
             time_utc=_nonempty_string(obj.get("time_utc"), f"{name}.time_utc"),
             time_local_candidate=_nonempty_string(
                 obj.get("time_local_candidate"), f"{name}.time_local_candidate"
@@ -144,15 +188,31 @@ class FeederPlan:
             days_raw=days_raw,
             days=days,
             portions=_integer(obj.get("portions"), f"{name}.portions", 0, 255),
-            enabled_raw=_integer(
-                obj.get("enabled_raw"), f"{name}.enabled_raw", 0, 255
+            enable_audio_raw=_integer(
+                obj.get("enable_audio_raw"), f"{name}.enable_audio_raw", 0, 255
             ),
-            bowl_or_target_raw=_integer(
-                obj.get("bowl_or_target_raw"),
-                f"{name}.bowl_or_target_raw",
+            audio_times=_integer(
+                obj.get("audio_times"),
+                f"{name}.audio_times",
                 0,
                 255,
             ),
+            execution_state=_integer(
+                obj.get("execution_state"),
+                f"{name}.execution_state",
+                0,
+                0xFFFFFFFF,
+            ),
+            sync_time=_integer(
+                obj.get("sync_time"), f"{name}.sync_time", 0, 0xFFFFFFFFFFFFFFFF
+            ),
+            skip_end_time=_integer(
+                obj.get("skip_end_time"),
+                f"{name}.skip_end_time",
+                0,
+                0xFFFFFFFFFFFFFFFF,
+            ),
+            opaque_hex=_fixed_hex(obj.get("opaque_hex"), f"{name}.opaque_hex", 10),
         )
 
     def semantic_fingerprint(self) -> tuple[object, ...]:
@@ -160,24 +220,37 @@ class FeederPlan:
             self.id,
             self.hour_utc,
             self.minute,
+            self.one_shot,
             tuple(sorted(self.days_raw)),
             self.portions,
-            self.enabled_raw,
-            self.bowl_or_target_raw,
+            self.enable_audio_raw,
+            self.audio_times,
+            self.skip_end_time,
         )
+
+    def stable_fingerprint(self) -> tuple[object, ...]:
+        """Persistent/protocol equality excluding runtime and regenerated sync metadata."""
+
+        return self.semantic_fingerprint() + (self.opaque_hex,)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "id": self.id,
             "minute": self.minute,
             "hour_utc": self.hour_utc,
+            "one_shot": self.one_shot,
+            "one_shot_raw": self.one_shot_raw,
             "time_utc": self.time_utc,
             "time_local_candidate": self.time_local_candidate,
             "days_raw": list(self.days_raw),
             "days": list(self.days),
             "portions": self.portions,
-            "enabled_raw": self.enabled_raw,
-            "bowl_or_target_raw": self.bowl_or_target_raw,
+            "enable_audio_raw": self.enable_audio_raw,
+            "audio_times": self.audio_times,
+            "execution_state": self.execution_state,
+            "sync_time": self.sync_time,
+            "skip_end_time": self.skip_end_time,
+            "opaque_hex": self.opaque_hex,
         }
 
 
@@ -209,13 +282,18 @@ class FeederPlans:
         ids = [plan.id for plan in records]
         if len(ids) != len(set(ids)):
             raise StateAgentBadResponse("plans.semantic_records contains duplicate IDs")
+        plan_bin_size = _integer(
+            obj.get("plan_bin_size"), "plans.plan_bin_size", 0
+        )
+        record_size = _integer(obj.get("record_size"), "plans.record_size", 0)
+        even_split = _boolean(obj.get("even_split"), "plans.even_split")
+        if record_size != 47 or plan_bin_size != count * 47 or not even_split:
+            raise StateAgentBadResponse("plans must contain exact 47-byte records")
         return cls(
             count=count,
-            plan_bin_size=_integer(
-                obj.get("plan_bin_size"), "plans.plan_bin_size", 0
-            ),
-            record_size=_integer(obj.get("record_size"), "plans.record_size", 0),
-            even_split=_boolean(obj.get("even_split"), "plans.even_split"),
+            plan_bin_size=plan_bin_size,
+            record_size=record_size,
+            even_split=even_split,
             semantic_records=records,
         )
 
@@ -248,7 +326,9 @@ class FeederTruth:
         return cls(
             read_ms=_integer(obj.get("read_ms"), "read_ms", 0),
             revisions=FeederRevisions.from_dict(obj.get("revisions")),
-            settings=FeederSettings.from_dict(obj.get("settings")),
+            settings=FeederSettings.from_dict(
+                obj.get("settings"), obj.get("setting_classes")
+            ),
             plans=FeederPlans.from_dict(obj.get("plans")),
             queue=FeederQueue.from_dict(obj.get("queue")),
             settings_raw=dict(
@@ -262,6 +342,14 @@ class FeederTruth:
             "read_ms": self.read_ms,
             "revisions": self.revisions.to_dict(),
             "settings": self.settings.to_dict(),
+            "setting_classes": {
+                setting_class.value: sorted(
+                    name
+                    for name, classified_as in self.settings.classes.items()
+                    if classified_as is setting_class
+                )
+                for setting_class in SettingClass
+            },
             "plans": self.plans.to_dict(),
             "queue": self.queue.to_dict(),
             "settings_raw": dict(self.settings_raw),
@@ -289,6 +377,7 @@ class FeedEventSnapshot:
     queue: FeederQueue
     err_queue: FeederQueue
     events: tuple[Mapping[str, object], ...]
+    semantics: str
 
     @classmethod
     def from_dict(cls, data: object) -> "FeedEventSnapshot":
@@ -302,6 +391,7 @@ class FeedEventSnapshot:
             queue=FeederQueue.from_dict(obj.get("queue")),
             err_queue=FeederQueue.from_dict(obj.get("err_queue"), "err_queue"),
             events=tuple(dict(event_value) for event_value in events),
+            semantics=_nonempty_string(obj.get("semantics"), "semantics"),
         )
 
 
@@ -413,6 +503,18 @@ def _nonempty_string(data: object, name: str) -> str:
     if not isinstance(data, str) or not data:
         raise StateAgentBadResponse(f"{name} must be a non-empty string")
     return data
+
+
+def _fixed_hex(data: object, name: str, expected_bytes: int) -> str:
+    value = _nonempty_string(data, name)
+    compact = "".join(value.split()).lower()
+    if len(compact) != expected_bytes * 2:
+        raise StateAgentBadResponse(f"{name} must encode {expected_bytes} bytes")
+    try:
+        bytes.fromhex(compact)
+    except ValueError:
+        raise StateAgentBadResponse(f"{name} must be hexadecimal") from None
+    return compact
 
 
 def _integer(

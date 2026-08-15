@@ -1,7 +1,12 @@
 from collections import deque
 from dataclasses import replace
 
-from state_agent import FeederTruth, RevisionSnapshot, StateAgentUnavailable
+from state_agent import (
+    FeederTruth,
+    RevisionSnapshot,
+    SettingClass,
+    StateAgentUnavailable,
+)
 from state_coordinator import (
     CommandReceipt,
     FeederState,
@@ -60,11 +65,13 @@ class FakeAgent:
     def __init__(self, cores):
         self.cores = deque(cores)
         self.core_calls = 0
+        self.core_raw_calls = []
         self.revision_calls = 0
         self.revision_value = None
 
-    def core(self):
+    def core(self, *, raw=False):
         self.core_calls += 1
+        self.core_raw_calls.append(raw)
         value = self.cores.popleft()
         if isinstance(value, Exception):
             raise value
@@ -154,6 +161,9 @@ def test_setting_write_ack_then_core_verification_updates_truth():
     assert sent == [80]
     assert coordinator.pending_write.stage == PendingStage.AWAITING_ACK
     coordinator.on_mqtt_ack(MqttAck("ATTR_SET_SERVICE", "message-1", True))
+    assert coordinator.state == FeederState.VERIFYING_WRITE
+    assert coordinator.latest_truth() is first
+    assert mirrored[-1].settings["volume"] != 80
     ad.run_next_timer()
 
     assert coordinator.state == FeederState.READY
@@ -224,8 +234,8 @@ def test_plan_preflight_uses_fresh_core_and_preserves_opaque_fields():
     assert emitted.minute == 30
     assert emitted.days_raw == (1, 3, 5)
     assert emitted.portions == 12
-    assert emitted.enabled_raw == 1
-    assert emitted.bowl_or_target_raw == 2
+    assert emitted.enable_audio_raw == 1
+    assert emitted.audio_times == 2
 
     coordinator.on_mqtt_ack(
         MqttAck("FEEDING_PLAN_SERVICE", "plan-message", True)
@@ -270,7 +280,7 @@ def test_plan_predicate_rejects_collateral_mutation_and_missing_plan():
             current.plans,
             count=2,
             semantic_records=(
-                replace(expected[0], bowl_or_target_raw=3),
+                replace(expected[0], audio_times=3),
                 expected[1],
             ),
         ),
@@ -327,14 +337,14 @@ def test_feeder_plan_request_uses_fresh_core_not_cached_truth():
     assert coordinator.latest_revisions().core_rev == "fnv64:fresh"
 
 
-def test_enabled_raw_other_than_zero_or_one_is_rejected():
-    plans = truth(enabled_raw=2).plans.semantic_records
+def test_enable_audio_raw_other_than_zero_or_one_is_rejected():
+    plans = truth(enable_audio_raw=2).plans.semantic_records
     try:
         validate_plan_transport_fields(plans)
     except ValueError as error:
-        assert "enabled_raw" in str(error)
+        assert "enable_audio_raw" in str(error)
     else:
-        raise AssertionError("unsupported enabled_raw was accepted")
+        raise AssertionError("unsupported enable_audio_raw was accepted")
 
 
 def test_plan_write_coalesces_only_while_preparing():
@@ -525,6 +535,120 @@ def test_verification_api_failure_never_returns_coordinator_to_ready():
     assert availability[-1] is False
 
 
+def test_sound_verification_failure_logs_only_numeric_raw_setting_changes():
+    initial = truth(settings_raw={
+        "motor_state_u8_0x0e": 2,
+        "sound_switch_u8_0x21": 0,
+        "opaque_text": "before-sensitive-value",
+    })
+    initial = replace(
+        initial,
+        settings=replace(
+            initial.settings,
+            values={**initial.settings.values, "sound_switch": "disabled"},
+        ),
+    )
+    preflight = initial
+    mismatch = replace(
+        initial,
+        settings_raw={
+            "motor_state_u8_0x0e": 2,
+            "sound_switch_u8_0x21": 2,
+            "opaque_text": "after-sensitive-value",
+        },
+    )
+    agent = FakeAgent([initial, preflight, mismatch, mismatch, mismatch, mismatch])
+    coordinator, ad, agent, logger, _mirrored, _availability = ready_coordinator(
+        agent
+    )
+    coordinator.request_persistent_write(
+        PersistentWriteRequest(
+            control="sound.enable",
+            target="enabled",
+            publisher=lambda _truth: CommandReceipt(
+                "ATTR_SET_SERVICE", "sound-message"
+            ),
+            predicate=SettingEqualsPredicate(
+                "sound_switch", "enabled"
+            ),
+            requires_fresh_preflight=True,
+            raw_settings_diagnostics=True,
+        )
+    )
+    coordinator.on_mqtt_ack(
+        MqttAck("ATTR_SET_SERVICE", "sound-message", True)
+    )
+    for _ in range(4):
+        ad.run_next_timer()
+
+    assert agent.core_raw_calls == [False, True, True, True, True, True]
+    diagnostic = next(
+        fields
+        for _level, message, fields in logger.records
+        if message == "persistent write raw settings diff"
+    )
+    assert diagnostic == {
+        "control": "sound.enable",
+        "changes": [{
+            "field": "sound_switch_u8_0x21",
+            "before": 0,
+            "after": 2,
+        }],
+    }
+    assert "sensitive-value" not in repr(logger.records)
+
+
+def test_sound_raw_diff_is_logged_when_persistent_switch_matches():
+    initial = truth(settings_raw={"sound_switch_u8_0x21": 1})
+    initial = replace(
+        initial,
+        settings=replace(
+            initial.settings,
+            values={
+                **initial.settings.values,
+                "sound_switch": "disabled",
+            },
+        ),
+    )
+    verified = replace(
+        initial,
+        settings_raw={"sound_switch_u8_0x21": 0},
+    )
+    agent = FakeAgent([initial, initial, verified])
+    coordinator, ad, _agent, logger, _mirrored, _availability = ready_coordinator(
+        agent
+    )
+    coordinator.request_persistent_write(
+        PersistentWriteRequest(
+            control="sound.enable",
+            target="disabled",
+            publisher=lambda _truth: CommandReceipt(
+                "ATTR_SET_SERVICE", "sound-off-message"
+            ),
+            predicate=SettingEqualsPredicate(
+                "sound_switch", "disabled"
+            ),
+            requires_fresh_preflight=True,
+            raw_settings_diagnostics=True,
+        )
+    )
+    coordinator.on_mqtt_ack(
+        MqttAck("ATTR_SET_SERVICE", "sound-off-message", True)
+    )
+    ad.run_next_timer()
+
+    diagnostic = next(
+        fields
+        for _level, message, fields in logger.records
+        if message == "persistent write raw settings diff"
+    )
+    assert diagnostic["changes"] == [{
+        "field": "sound_switch_u8_0x21",
+        "before": 1,
+        "after": 0,
+    }]
+
+
 def test_truth_application_guard_suppresses_nested_writeback():
     ad = FakeAD()
     agent = FakeAgent([truth()])
@@ -554,37 +678,88 @@ def test_truth_application_guard_suppresses_nested_writeback():
 def test_setting_predicate_supports_every_exposed_controllable_field():
     settings = {
         "bowl_mode": "dual_bowl",
-        "sound_enable_or_mode": "enabled",
+        "sound_switch": "enabled",
         "volume": 76,
-        "auto_lock_enable": "enabled",
-        "meal_call_or_feeding_audio_enable": "disabled",
-        "button_lights_enable": "enabled",
+        "auto_change_mode": 1,
+        "auto_threshold": 20,
+        "feeding_audio_enabled": "disabled",
+        "light_switch": "enabled",
         "button_lights_mode": "always_active",
         "sound_mode": "always_active",
-        "camera_enable": "enabled",
+        "camera_switch": "enabled",
         "camera_mode": "always_active",
         "camera_resolution": "1080p",
         "night_vision_mode": "off",
-        "local_video_recording_enable": "disabled",
+        "video_record_switch": "disabled",
         "local_camera_recording_type": "continuous",
         "local_recording_mode": "always_active",
         "feeding_video_recording_enable": "enabled",
         "record_scheduled_feedings": "disabled",
         "record_manual_feedings": "enabled",
-        "scheduled_meal_pre_record_time_enum": 2,
-        "automatic_recording_duration_enum": 2,
-        "after_feeding_recording_duration_enum": 1,
+        "before_feeding_plan_minutes": 2,
+        "automatic_recording_minutes": 2,
+        "after_manual_feeding_minutes": 1,
         "video_watermark_enable": "enabled",
-        "motion_detection_enable": "disabled",
+        "motion_detection_switch": "disabled",
         "motion_detection_mode": "always_active",
         "motion_detection_sensitivity": "medium",
         "motion_detection_range": "small",
-        "sound_detection_enable": "disabled",
+        "sound_detection_switch": "disabled",
         "sound_detection_mode": "always_active",
         "sound_detection_sensitivity": "low",
-        "cloud_video_recording_enable": "disabled",
+        "cloud_video_record_switch": "disabled",
     }
     current = truth()
-    current = replace(current, settings=replace(current.settings, values=settings))
+    current = replace(
+        current,
+        settings=replace(
+            current.settings,
+            values=settings,
+            classes={field: SettingClass.PERSISTENT for field in settings},
+        ),
+    )
     for field, expected in settings.items():
         assert SettingEqualsPredicate(field, expected).matches(current), field
+
+
+def test_setting_predicate_never_verifies_effective_cached_or_runtime_fields():
+    current = truth()
+    current = replace(
+        current,
+        settings=replace(
+            current.settings,
+            values={"sound_effective_cached": "enabled", "motor_state_raw": 1},
+            classes={
+                "sound_effective_cached": SettingClass.EFFECTIVE_CACHED,
+                "motor_state_raw": SettingClass.RUNTIME,
+            },
+        ),
+    )
+
+    assert not SettingEqualsPredicate(
+        "sound_effective_cached", "enabled"
+    ).matches(current)
+    assert not SettingEqualsPredicate("motor_state_raw", 1).matches(current)
+
+
+def test_matching_persistent_switch_ignores_mismatching_effective_cache():
+    current = truth()
+    current = replace(
+        current,
+        settings=replace(
+            current.settings,
+            values={
+                "sound_switch": "enabled",
+                "sound_effective_cached": "disabled",
+            },
+            classes={
+                "sound_switch": SettingClass.PERSISTENT,
+                "sound_effective_cached": SettingClass.EFFECTIVE_CACHED,
+            },
+        ),
+    )
+
+    assert SettingEqualsPredicate("sound_switch", "enabled").matches(current)
+    assert not SettingEqualsPredicate(
+        "sound_effective_cached", "disabled"
+    ).matches(current)

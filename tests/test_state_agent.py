@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from unittest.mock import patch
 
 import pytest
@@ -25,7 +26,7 @@ class FakeResponse:
         return self.body
 
 
-def core_payload(*, enabled_raw=1, bowl_or_target_raw=2, settings_raw=None):
+def core_payload(*, enable_audio_raw=1, audio_times=2, settings_raw=None):
     payload = {
         "ok": True,
         "read_ms": 1,
@@ -38,6 +39,12 @@ def core_payload(*, enabled_raw=1, bowl_or_target_raw=2, settings_raw=None):
         "settings": {
             "volume": 76,
             "camera_resolution": "1080p",
+            "sound_switch": "enabled",
+        },
+        "setting_classes": {
+            "persistent": ["volume", "camera_resolution", "sound_switch"],
+            "effective_cached": [],
+            "runtime": [],
         },
         "plans": {
             "ok": True,
@@ -50,6 +57,8 @@ def core_payload(*, enabled_raw=1, bowl_or_target_raw=2, settings_raw=None):
                     "id": 1,
                     "minute": 0,
                     "hour_utc": 11,
+                    "one_shot": False,
+                    "one_shot_raw": 0,
                     "time_utc": "11:00",
                     "time_local_candidate": "07:00",
                     "days_raw": [1, 2, 3, 4, 5, 6, 7],
@@ -63,8 +72,12 @@ def core_payload(*, enabled_raw=1, bowl_or_target_raw=2, settings_raw=None):
                         "sunday",
                     ],
                     "portions": 10,
-                    "enabled_raw": enabled_raw,
-                    "bowl_or_target_raw": bowl_or_target_raw,
+                    "enable_audio_raw": enable_audio_raw,
+                    "audio_times": audio_times,
+                    "execution_state": 0,
+                    "sync_time": 1_700_000_000_000,
+                    "skip_end_time": 0,
+                    "opaque_hex": "00 01 02 03 04 05 06 07 08 09",
                 }
             ],
         },
@@ -83,8 +96,9 @@ def test_core_parser_builds_explicit_truth_models():
     assert truth.settings["volume"] == 76
     assert truth.revisions.core_rev == "fnv64:core"
     assert truth.plans.count == 1
-    assert truth.plans.by_id(1).enabled_raw == 1
-    assert truth.plans.by_id(1).bowl_or_target_raw == 2
+    assert truth.plans.by_id(1).enable_audio_raw == 1
+    assert truth.plans.by_id(1).audio_times == 2
+    assert truth.settings.is_persistent("sound_switch")
     assert truth.settings_raw == {"attr_state_0x0012": 0}
 
 
@@ -115,6 +129,29 @@ def test_core_parser_rejects_count_mismatch_and_duplicate_days():
         FeederTruth.from_dict(payload)
 
 
+def test_plan_semantic_equality_excludes_execution_state_and_sync_metadata():
+    plan = FeederTruth.from_dict(core_payload()).plans.by_id(1)
+
+    runtime_changed = replace(
+        plan,
+        execution_state=0xAABBCCDD,
+        sync_time=plan.sync_time + 5000,
+    )
+    schedule_changed = replace(plan, portions=plan.portions + 1)
+
+    assert runtime_changed.semantic_fingerprint() == plan.semantic_fingerprint()
+    assert runtime_changed.stable_fingerprint() == plan.stable_fingerprint()
+    assert schedule_changed.semantic_fingerprint() != plan.semantic_fingerprint()
+
+
+def test_plan_opaque_tail_is_preserved_but_not_called_schedule_semantics():
+    plan = FeederTruth.from_dict(core_payload()).plans.by_id(1)
+    opaque_changed = replace(plan, opaque_hex="ff" * 10)
+
+    assert opaque_changed.semantic_fingerprint() == plan.semantic_fingerprint()
+    assert opaque_changed.stable_fingerprint() != plan.stable_fingerprint()
+
+
 def test_client_rejects_credentials_in_url_and_never_exposes_token():
     token = "top-secret-token"
     with pytest.raises(ValueError, match="credentials") as error:
@@ -142,6 +179,7 @@ def test_client_sends_bearer_auth_and_parses_all_read_only_endpoints():
                 "ok": True,
                 "queue": core_payload()["queue"],
                 "err_queue": {"head": 255, "tail": 255, "pending": False},
+                "semantics": "pending_outbound_events_not_history",
                 "events": [],
             }
         ),

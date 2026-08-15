@@ -129,14 +129,23 @@ is not used as feeder truth. If the API becomes unreachable, the controller
 keeps MQTT heartbeat handling active but blocks setting and plan writes until a
 fresh reconciliation succeeds.
 
+Install the matching State Agent 0.2.0 build from the repository's
+`feeder-state-agent/` component. It classifies fields as persistent,
+effective-cached, or runtime; writable Home Assistant entities verify only the
+persistent field. Cached `enableX` bytes remain diagnostic even if their value
+temporarily differs from the user's persistent switch.
+
 The nine **Feeding schedule** text entities accept flat JSON. Each document's
 `id` must match its displayed slot number and must already exist on the feeder.
 The user-editable fields are `execution_time`, `scheduled_days`, and
 `grain_num`; legacy audio fields are ignored because their meanings are not
-verified. Every edit preflights a fresh full plan collection, preserves opaque
-feeder-owned fields, sends the entire collection, and verifies the entire
-collection through `/v1/core` after the MQTT acknowledgement. A retained or
-stored Home Assistant value is never used to construct the command.
+verified. Every edit preflights a fresh full plan collection, carries
+`skip_end_time` and audio transport values through the MQTT schema, retains the
+opaque tail in its cloned truth model, and sends the entire collection. The
+post-ack readback requires that opaque tail and all non-target plans to remain
+unchanged. Runtime plan execution state and the regenerated target `syncTime`
+do not cause false divergence. A retained or stored Home Assistant value is
+never used to construct the command.
 
 ## Camera metadata publishing
 

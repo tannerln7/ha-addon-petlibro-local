@@ -93,6 +93,12 @@ the add-on continues required MQTT protocol responses but deliberately blocks
 persistent setting and schedule writes rather than replaying stale Home
 Assistant state.
 
+The feeder-resident State Agent is maintained as a first-class component in
+[`feeder-state-agent`](feeder-state-agent/). State Agent 0.2.0 replaces the
+older observational field map with the audited 236-byte state layout, exact
+47-byte plan records, and 51-slot pending feed-event queue. An older agent will
+not provide the fields required for safe persistent verification.
+
 `mqtt_host` is only the address used by AppDaemon inside the add-on. It is not
 written to the feeder. Feeder endpoint persistence is disabled by default so a
 Home Assistant-only hostname cannot strand the physical device. The advanced
@@ -191,6 +197,7 @@ tree; `GO_BUILD_PROCS` defaults to `2` to reduce compiler pressure. See the
 - [MQTT camera contract](docs/mqtt-camera-contract.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Development](DEVELOPMENT.md)
+- [Feeder state agent](feeder-state-agent/README.md)
 - [Add-on options](petlibro-local/DOCS.md)
 - [Docker / LXC deployment](docker/README.md)
 - [Release history](petlibro-local/CHANGELOG.md)
