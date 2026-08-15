@@ -16,6 +16,9 @@ users configure the same values in the ignored `docker/.env` file.
 | `feeder_mqtt_host` | `FEEDER_MQTT_HOST` | Broker address sent to the physical feeder only |
 | `feeder_mqtt_port` | `FEEDER_MQTT_PORT` | Broker port sent to the physical feeder only |
 | `feeder_https_addr` | `FEEDER_HTTPS_ADDR` | Optional HTTPS value in an explicit endpoint update |
+| `petlibro_state_agent_url` | `PETLIBRO_STATE_AGENT_URL` | Optional feeder truth API URL or `{ip}` template |
+| `petlibro_state_agent_token` | `PETLIBRO_STATE_AGENT_TOKEN` | Bearer token for the feeder truth API |
+| `petlibro_state_agent_timeout_seconds` | `PETLIBRO_STATE_AGENT_TIMEOUT_SECONDS` | Per-request state API timeout |
 | `device_discovery` | `DEVICE_DISCOVERY` | MQTT identity discovery coordinator |
 | `product_filter` | `PRODUCT_FILTER` | Accepted feeder topic product |
 | `lan_cidr` | `LAN_CIDR` | UID-specific LAN_SEARCH3/KNOCK2 camera-address search network |
@@ -50,7 +53,7 @@ behavior.
 | `/data/go2rtc.yaml` | Listener configuration and generated Petlibro stream URL |
 | `/data/appdaemon.yaml` | AppDaemon core, namespace, and MQTT plugin configuration |
 | `/data/apps.yaml` | Discovery coordinator and one PLAF203 app per device |
-| `/data/appdaemon-secrets.yaml` | MQTT username and password only |
+| `/data/appdaemon-secrets.yaml` | MQTT credentials and feeder state-agent bearer token |
 | `/data/devices.json` | Atomic mode-0600 device identity/address registry |
 | `/data/appdaemon/` | AppDaemon app links and persistent namespace state |
 | `/data/petlibro_camera_status_<stream>.json` | Per-stream atomic go2rtc camera runtime status; mode 0600 |
@@ -61,9 +64,66 @@ Generated YAML and secrets files are written with mode 0600. Do not copy them
 into Git or attach them to public issues.
 
 The generated AppDaemon configuration explicitly marks the `plaf203` namespace
-as persistent with safe writeback. Feeding plans and the manual-feed portion
-default therefore survive an add-on restart; a reset feeder with no configured
-plan still starts with an empty backend plan and is not overwritten.
+as persistent with safe writeback. The manual-feed portion preference and a
+diagnostic copy of the last verified feeder truth survive an add-on restart.
+That copy is never used to generate a device write or feeding-plan response;
+fresh feeder state from `/v1/core` is authoritative.
+
+## Feeder state API and reconciliation
+
+Persistent settings and feeding plans use the feeder-side read-only state API.
+When `petlibro_state_agent_url` is empty, the renderer derives
+`http://<discovered-feeder-ip>:8765` for each device. A custom URL may include
+one `{ip}` placeholder. A fixed URL is suitable only when one feeder is
+configured. The URL must use HTTP or HTTPS and cannot contain credentials,
+query parameters, or a fragment.
+
+Set `petlibro_state_agent_token` to the bearer token configured in the feeder
+agent. The renderer places it in the mode-0600 AppDaemon secrets file and
+references it with `!secret`; application logs never include it. The default
+request timeout is two seconds.
+
+On a feeder startup event or first heartbeat, the controller reads `/v1/core`
+before accepting a persistent write. It then mirrors feeder settings and
+semantic plan records into Home Assistant. Subsequent heartbeats use `/v1/rev`
+and fetch the full state only when `core_rev` changes, during reconnect, or to
+verify a pending write.
+
+Persistent writes follow `READY -> PENDING_WRITE -> VERIFYING_WRITE`. An MQTT
+acknowledgement only confirms protocol receipt. The controller reads
+`/v1/core` after the acknowledgement and commits the result only when the
+feeder-local value matches. A mismatch enters `DIVERGED`, republishes the
+actual feeder value, and returns to `READY`. If the API is unavailable, the
+controller remains outside `READY` and blocks persistent writes rather than
+falling back to retained MQTT, Home Assistant, or AppDaemon storage.
+
+### Feeding-plan edits
+
+An edit is supported only for a plan ID already present in
+`/v1/core.plans.semantic_records`; plan add/delete is not currently exposed.
+Before every plan command the controller performs a fresh `/v1/core` preflight
+and builds one full-collection MQTT payload from that response. It mutates only
+the requested UTC hour, minute, weekday set, and portions. The opaque
+`enabled_raw` and `bowl_or_target_raw` values pass through unchanged; at the
+wire boundary only, `enabled_raw` values `0` and `1` become booleans and
+`bowl_or_target_raw` occupies the existing `audioTimes` field. Other
+`enabled_raw` values are rejected.
+
+After the acknowledgement, verification requires the same plan count and IDs,
+the requested target change, unchanged target opaque fields, and byte-semantic
+equivalence of every non-target record. `GET_FEEDING_PLAN_EVENT` also performs
+a fresh core read. If it fails, the controller sends the protocol error form
+with no plans instead of fabricating a schedule.
+
+The current state-agent schema does not expose the feeding-audio URL or the
+button auto-lock threshold. Their existing Home Assistant entities remain for
+contract compatibility, but writes are blocked with an actionable warning
+rather than being acknowledged without local verification. Manual feeding is
+an action and continues to use its MQTT acknowledgement/event path instead of
+expecting a persistent `/v1/core` change. Explicit feeder MQTT endpoint
+persistence remains a separately gated recovery operation and is reported as
+acknowledged-but-not-locally-verifiable because `/v1/core` does not expose
+endpoint configuration.
 
 ## Device discovery and overrides
 

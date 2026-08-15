@@ -13,6 +13,7 @@ flowchart LR
         Discovery[Discovery coordinator]
         Registry[Private device registry]
         Controller[PLAF203 AppDaemon controller]
+        Truth[Feeder state coordinator]
         Go2rtc
         Status[Per-stream camera status JSON]
     end
@@ -25,6 +26,9 @@ flowchart LR
     Status -->|Health and address refresh trigger| Discovery
     Status -->|Validated per-stream polling| Controller
     Controller <-->|Local PLAF203 MQTT protocol| Broker
+    Controller --> Truth
+    Truth -->|Read-only revisions and core state| StateAgent[Feeder state agent]
+    StateAgent -->|Decodes local state files| Feeder
     Controller -.->|Explicit validated endpoint update only| Feeder
     Controller -->|Retained camera state and availability| Broker
     Broker <-->|Redirected plaintext MQTT| Feeder[PLAF203 feeder]
@@ -51,6 +55,54 @@ persistence settings. Normal startup acknowledges the feeder without sending
 an endpoint sync. An explicitly enabled update is allowed only after the
 feeder-facing host resolves outside Home Assistant's internal networks and its
 MQTT port accepts a bounded TCP connection.
+
+Persistent control is split between the MQTT adapter and a single state
+coordinator. The adapter encodes commands and correlates acknowledgements; it
+does not own setting or plan truth. The coordinator alone owns the last
+verified `/v1/core` model and revisions, projects that truth into Home
+Assistant under a writeback-suppression guard, and serializes persistent
+writes.
+
+```mermaid
+stateDiagram-v2
+    [*] --> DISCONNECTED
+    DISCONNECTED --> CONNECTED: startup event or heartbeat
+    CONNECTED --> RECONCILING: fetch /v1/core
+    RECONCILING --> READY: mirror verified feeder truth
+    READY --> PENDING_WRITE: user command
+    PENDING_WRITE --> VERIFYING_WRITE: matching MQTT ack
+    VERIFYING_WRITE --> READY: /v1/core matches target
+    VERIFYING_WRITE --> DIVERGED: persisted state mismatch
+    DIVERGED --> READY: apply actual feeder truth
+    READY --> DISCONNECTED: MQTT loss or state API failure
+```
+
+Heartbeat processing sends the existing feeder protocol traffic and uses
+`/v1/rev` as the inexpensive change detector. Full core reads occur on initial
+reconciliation, a revision change, plan preflight, plan-response requests, and
+write verification. An MQTT acknowledgement never mutates local truth by
+itself. API loss marks persistent state unavailable and blocks writes instead
+of promoting retained Home Assistant state.
+
+Feeding plans have no second cache in `Backend` or AppDaemon storage. Every
+edit starts with a fresh core preflight and is sent as a full collection. The
+target plan changes only in time, weekdays, and portions; opaque raw fields and
+all non-target plans are preserved and included in post-ack collection
+verification.
+
+The AppDaemon implementation follows the same boundaries in code:
+
+| Module | Responsibility |
+|---|---|
+| `plaf203.py` | Application lifecycle and component wiring |
+| `state_agent.py` | Authenticated, read-only HTTP models and client |
+| `state_coordinator.py` | Truth, revisions, serialized writes, verification, and divergence |
+| `mqtt_client.py` / `protocol.py` | Feeder MQTT transport and wire schemas |
+| `backend.py` | Protocol lifecycle, commands, acknowledgements, and telemetry callbacks |
+| `settings_map.py` / `commands.py` | Declarative HA/semantic/wire mappings and user command routing |
+| `feed_plans.py` | Plan parsing, opaque-field preservation, serialization, and display projection |
+| `ha_entities.py` / `telemetry.py` | MQTT discovery, verified-state mirroring, and operational telemetry |
+| `storage.py` | Local manual-feed preference and stale diagnostics, never feeder truth |
 
 ### Discovery coordinator
 

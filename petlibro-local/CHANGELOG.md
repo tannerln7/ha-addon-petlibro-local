@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.8
+
+- Make the authenticated feeder-side state API authoritative for persistent
+  settings and feeding plans; retained Home Assistant and AppDaemon storage
+  values are now mirror/diagnostic state only.
+- Add explicit reconciliation, revision polling, serialized pending writes,
+  MQTT acknowledgement correlation, feeder-local verification, and divergence
+  handling. Persistent writes are blocked while the state API is unavailable.
+- Build every feeding-plan edit and feeder plan-response from a fresh
+  `/v1/core` read, preserve opaque per-plan fields, send the complete
+  collection, and verify that no plan was added, removed, or changed
+  collaterally.
+- Add state-agent URL, bearer-token, and timeout options plus focused parser,
+  coordinator, retained-command, configuration, and feed-plan regression tests.
+- Split the AppDaemon controller into focused transport, protocol, backend,
+  command, mapping, plan, HA projection, telemetry, and storage modules. Remove
+  the old parallel setting/plan projection paths and centralize persistent
+  command mappings around the coordinator authority model.
+
 ## 0.2.7
 
 - Persist and republish accepted feeding-plan edits so all nine Home Assistant

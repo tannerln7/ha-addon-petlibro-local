@@ -15,8 +15,16 @@ artifacts/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+*.egg-info/
 .coverage
+.coverage.*
 coverage.xml
+coverage.json
+junit.xml
 htmlcov/
 
 # Build and runtime output

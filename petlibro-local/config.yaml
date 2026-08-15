@@ -1,5 +1,5 @@
 name: Petlibro Local backend
-version: "0.2.7"
+version: "0.2.8"
 slug: petlibro_local
 description: Local PLAF203 MQTT control and camera streaming backend
 url: https://github.com/tannerln7/ha-addon-petlibro-local
@@ -33,6 +33,9 @@ options:
   feeder_mqtt_host: ""
   feeder_mqtt_port: 1883
   feeder_https_addr: ""
+  petlibro_state_agent_url: ""
+  petlibro_state_agent_token: ""
+  petlibro_state_agent_timeout_seconds: 2
   device_discovery: true
   product_filter: PLAF203
   lan_cidr: 192.168.1.0/24
@@ -66,6 +69,9 @@ schema:
   feeder_mqtt_host: str
   feeder_mqtt_port: port
   feeder_https_addr: str
+  petlibro_state_agent_url: str
+  petlibro_state_agent_token: password
+  petlibro_state_agent_timeout_seconds: int(1,10)
   device_discovery: bool
   product_filter: list(PLAF203)
   lan_cidr: str

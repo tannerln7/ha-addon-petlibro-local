@@ -54,7 +54,8 @@ To install from a repository that Home Assistant can access:
    this area **Settings → Add-ons → Add-on Store**.
 2. Open the three-dot menu, choose **Repositories**, and add the URL above.
 3. Install **Petlibro Local backend**.
-4. Configure the MQTT broker connection and the feeder LAN subnet.
+4. Configure the MQTT broker connection, feeder LAN subnet, and the bearer
+   token used by the feeder-side read-only state agent.
 5. Start the app, then reboot or power-cycle the feeder so its startup event is
    visible to the discovery coordinator.
 6. Watch the app log until MQTT identity discovery, LAN address resolution, and
@@ -83,6 +84,15 @@ and it must authenticate both the backend identity configured here and the
 physical feeder's separately provisioned identity. See the
 [add-on option reference](petlibro-local/DOCS.md) for every setting.
 
+Persistent feeder settings and schedules require the read-only state agent to
+be running on the feeder. By default the add-on uses
+`http://<discovered-feeder-ip>:8765`; `petlibro_state_agent_url` can override
+that address or use an `{ip}` placeholder. The agent's bearer token belongs in
+`petlibro_state_agent_token`. If the API cannot be authenticated or reached,
+the add-on continues required MQTT protocol responses but deliberately blocks
+persistent setting and schedule writes rather than replaying stale Home
+Assistant state.
+
 `mqtt_host` is only the address used by AppDaemon inside the add-on. It is not
 written to the feeder. Feeder endpoint persistence is disabled by default so a
 Home Assistant-only hostname cannot strand the physical device. The advanced
@@ -103,6 +113,11 @@ The complete first-run sequence is:
 6. It resolves the IP over `lan_cidr`, saves `/data/devices.json`, and generates
    the direct-IP go2rtc stream.
 7. Open the generated stream to start the lazy camera producer.
+
+On first feeder contact the controller reads `/v1/core` and mirrors that local
+feeder truth into Home Assistant before accepting persistent writes. Home
+Assistant entities are controls and displays, never a recovery source for
+feeder settings or schedules.
 
 If the feeder was rebooted before the backend started, reboot it once more; the
 UID startup event is not assumed to be retained by the broker.
@@ -156,6 +171,8 @@ tree; `GO_BUILD_PROCS` defaults to `2` to reduce compiler pressure. See the
 
 - Keep MQTT credentials, feeder serials, camera UIDs, product secrets, and raw
   protocol dumps out of Git and issue reports.
+- Treat the feeder state-agent bearer token as a secret. The renderer stores it
+  in a mode-0600 AppDaemon secrets file; do not include it in URLs or logs.
 - The feeder's product-secret-based MQTT credential belongs in the external
   broker's device account. This backend does not provision that account;
   `mqtt_username` and `mqtt_password` authenticate AppDaemon itself.

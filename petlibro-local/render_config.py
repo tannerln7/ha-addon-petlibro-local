@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 from string import Template
 from urllib.parse import urlencode
+from urllib.parse import urlsplit
 
 
 DEFAULTS = {
@@ -25,6 +26,9 @@ DEFAULTS = {
     "feeder_mqtt_host": "",
     "feeder_mqtt_port": 1883,
     "feeder_https_addr": "",
+    "petlibro_state_agent_url": "",
+    "petlibro_state_agent_token": "",
+    "petlibro_state_agent_timeout_seconds": 2,
     "device_discovery": True,
     "product_filter": "PLAF203",
     "lan_cidr": "192.168.1.0/24",
@@ -69,6 +73,7 @@ BOOL_KEYS = {
 INT_KEYS = {
     "mqtt_port",
     "feeder_mqtt_port",
+    "petlibro_state_agent_timeout_seconds",
     "ip_resolve_timeout_seconds",
     "ip_discovery_broadcast_seconds",
     "ip_discovery_max_unicast_per_second",
@@ -152,6 +157,27 @@ def validate(options: dict[str, object]) -> None:
     ).strip():
         raise ValueError(
             "feeder_mqtt_host is required when persist_feeder_mqtt is enabled"
+        )
+    state_agent_url = str(options["petlibro_state_agent_url"]).strip()
+    if state_agent_url:
+        candidate_url = state_agent_url.replace("{ip}", "192.0.2.1")
+        parsed_state_agent_url = urlsplit(candidate_url)
+        if (
+            parsed_state_agent_url.scheme not in {"http", "https"}
+            or not parsed_state_agent_url.hostname
+            or parsed_state_agent_url.username
+            or parsed_state_agent_url.password
+            or parsed_state_agent_url.query
+            or parsed_state_agent_url.fragment
+        ):
+            raise ValueError(
+                "petlibro_state_agent_url must be an HTTP(S) URL without credentials, query, or fragment"
+            )
+        if "{" in state_agent_url.replace("{ip}", "") or "}" in state_agent_url.replace("{ip}", ""):
+            raise ValueError("petlibro_state_agent_url only supports the {ip} placeholder")
+    if not 1 <= int(options["petlibro_state_agent_timeout_seconds"]) <= 10:
+        raise ValueError(
+            "petlibro_state_agent_timeout_seconds must be between 1 and 10"
         )
     if not 1 <= int(options["ip_resolve_timeout_seconds"]) <= 60:
         raise ValueError("ip_resolve_timeout_seconds must be between 1 and 60")
@@ -489,10 +515,17 @@ def render_go2rtc(options: dict[str, object], data_dir: Path, template_dir: Path
     return changed
 
 
+class SecretRef:
+    def __init__(self, name: str):
+        self.name = name
+
+
 def _yaml_entry(name: str, values: dict[str, object]) -> list[str]:
     lines = [f"{name}:"]
     for key, value in values.items():
-        if isinstance(value, bool):
+        if isinstance(value, SecretRef):
+            rendered = f"!secret {value.name}"
+        elif isinstance(value, bool):
             rendered = "true" if value else "false"
         elif isinstance(value, int):
             rendered = str(value)
@@ -507,6 +540,16 @@ def _camera_topic_prefix(options: dict[str, object], product: str, serial: str) 
     if configured:
         return f"{configured}/{product}/{serial}/camera"
     return f"petlibro_local/{product}/{serial}/camera"
+
+
+def state_agent_url_for(options: dict[str, object], device: dict[str, object]) -> str:
+    configured = str(options["petlibro_state_agent_url"]).strip().rstrip("/")
+    ip_address = str(device.get("ip_address", "")).strip()
+    if configured:
+        if "{ip}" in configured:
+            return configured.replace("{ip}", ip_address) if ip_address else ""
+        return configured
+    return f"http://{ip_address}:8765" if ip_address else ""
 
 
 def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: Path) -> bool:
@@ -571,6 +614,13 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
                     "feeder_mqtt_host": options["feeder_mqtt_host"],
                     "feeder_mqtt_port": options["feeder_mqtt_port"],
                     "feeder_https_addr": options["feeder_https_addr"],
+                    "petlibro_state_agent_url": state_agent_url_for(options, device),
+                    "petlibro_state_agent_token": SecretRef(
+                        "petlibro_state_agent_token"
+                    ),
+                    "petlibro_state_agent_timeout_seconds": options[
+                        "petlibro_state_agent_timeout_seconds"
+                    ],
                     "tutk_p2p_region": "REGION_US",
                     "go2rtc_stream_name": stream_name,
                     "camera_quality": options["camera_quality"],
@@ -595,6 +645,8 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
         + yaml_string(options["mqtt_username"])
         + "\nmqtt_password: "
         + yaml_string(options["mqtt_password"])
+        + "\npetlibro_state_agent_token: "
+        + yaml_string(options["petlibro_state_agent_token"])
         + "\n",
     )
 
@@ -629,6 +681,72 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
             os.environ.get(
                 "PETLIBRO_FEEDER_MQTT_VALIDATION_SOURCE",
                 "/opt/petlibro-local/appdaemon/feeder_mqtt_validation.py",
+            )
+        ),
+        app_dir / "state_agent.py": Path(
+            os.environ.get(
+                "PETLIBRO_STATE_AGENT_SOURCE",
+                "/opt/petlibro-local/appdaemon/state_agent.py",
+            )
+        ),
+        app_dir / "state_coordinator.py": Path(
+            os.environ.get(
+                "PETLIBRO_STATE_COORDINATOR_SOURCE",
+                "/opt/petlibro-local/appdaemon/state_coordinator.py",
+            )
+        ),
+        app_dir / "backend.py": Path(
+            os.environ.get(
+                "PETLIBRO_BACKEND_SOURCE",
+                "/opt/petlibro-local/appdaemon/backend.py",
+            )
+        ),
+        app_dir / "commands.py": Path(
+            os.environ.get(
+                "PETLIBRO_COMMANDS_SOURCE",
+                "/opt/petlibro-local/appdaemon/commands.py",
+            )
+        ),
+        app_dir / "feed_plans.py": Path(
+            os.environ.get(
+                "PETLIBRO_FEED_PLANS_SOURCE",
+                "/opt/petlibro-local/appdaemon/feed_plans.py",
+            )
+        ),
+        app_dir / "ha_entities.py": Path(
+            os.environ.get(
+                "PETLIBRO_HA_ENTITIES_SOURCE",
+                "/opt/petlibro-local/appdaemon/ha_entities.py",
+            )
+        ),
+        app_dir / "mqtt_client.py": Path(
+            os.environ.get(
+                "PETLIBRO_MQTT_CLIENT_SOURCE",
+                "/opt/petlibro-local/appdaemon/mqtt_client.py",
+            )
+        ),
+        app_dir / "protocol.py": Path(
+            os.environ.get(
+                "PETLIBRO_PROTOCOL_SOURCE",
+                "/opt/petlibro-local/appdaemon/protocol.py",
+            )
+        ),
+        app_dir / "settings_map.py": Path(
+            os.environ.get(
+                "PETLIBRO_SETTINGS_MAP_SOURCE",
+                "/opt/petlibro-local/appdaemon/settings_map.py",
+            )
+        ),
+        app_dir / "storage.py": Path(
+            os.environ.get(
+                "PETLIBRO_STORAGE_SOURCE",
+                "/opt/petlibro-local/appdaemon/storage.py",
+            )
+        ),
+        app_dir / "telemetry.py": Path(
+            os.environ.get(
+                "PETLIBRO_TELEMETRY_SOURCE",
+                "/opt/petlibro-local/appdaemon/telemetry.py",
             )
         ),
     }

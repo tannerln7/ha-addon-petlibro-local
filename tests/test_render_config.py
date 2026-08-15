@@ -38,7 +38,20 @@ class RenderConfigTests(unittest.TestCase):
             render_config.validate(options)
             self.render_all(options, data_dir)
 
-            config = AllAppConfig.from_config_file(data_dir / "apps.yaml")
+            # The standalone model loader does not know the AppDaemon secrets
+            # file that the runtime config points at. Replace only the secret
+            # tag for this schema-focused assertion.
+            model_apps = data_dir / "apps-model.yaml"
+            model_apps.write_text(
+                (data_dir / "apps.yaml")
+                .read_text(encoding="utf-8")
+                .replace(
+                    "!secret petlibro_state_agent_token",
+                    '"state-agent-token-placeholder"',
+                ),
+                encoding="utf-8",
+            )
+            config = AllAppConfig.from_config_file(model_apps)
             for app_name in ("petlibro_discovery", "plaf203_example123"):
                 app = config[app_name]
                 self.assertIsNone(app.log_level)
@@ -69,27 +82,32 @@ class RenderConfigTests(unittest.TestCase):
         }
 
     def render_all(self, options, data_dir):
-        source = data_dir / "plaf203.py"
-        metadata = data_dir / "camera_metadata.py"
-        discovery = data_dir / "device_discovery.py"
-        logging_source = data_dir / "petlibro_logging.py"
-        feeder_mqtt_validation = data_dir / "feeder_mqtt_validation.py"
-        for path in (
-            source,
-            metadata,
-            discovery,
-            logging_source,
-            feeder_mqtt_validation,
-        ):
+        module_environment_names = {
+            "plaf203.py": "PETLIBRO_APP_SOURCE",
+            "backend.py": "PETLIBRO_BACKEND_SOURCE",
+            "camera_metadata.py": "PETLIBRO_CAMERA_METADATA_SOURCE",
+            "commands.py": "PETLIBRO_COMMANDS_SOURCE",
+            "device_discovery.py": "PETLIBRO_DEVICE_DISCOVERY_SOURCE",
+            "feed_plans.py": "PETLIBRO_FEED_PLANS_SOURCE",
+            "feeder_mqtt_validation.py": "PETLIBRO_FEEDER_MQTT_VALIDATION_SOURCE",
+            "ha_entities.py": "PETLIBRO_HA_ENTITIES_SOURCE",
+            "mqtt_client.py": "PETLIBRO_MQTT_CLIENT_SOURCE",
+            "petlibro_logging.py": "PETLIBRO_LOGGING_SOURCE",
+            "protocol.py": "PETLIBRO_PROTOCOL_SOURCE",
+            "settings_map.py": "PETLIBRO_SETTINGS_MAP_SOURCE",
+            "state_agent.py": "PETLIBRO_STATE_AGENT_SOURCE",
+            "state_coordinator.py": "PETLIBRO_STATE_COORDINATOR_SOURCE",
+            "storage.py": "PETLIBRO_STORAGE_SOURCE",
+            "telemetry.py": "PETLIBRO_TELEMETRY_SOURCE",
+        }
+        sources = {
+            filename: data_dir / filename for filename in module_environment_names
+        }
+        for path in sources.values():
             path.write_text("# synthetic app source\n", encoding="utf-8")
         environment = {
-            "PETLIBRO_APP_SOURCE": str(source),
-            "PETLIBRO_CAMERA_METADATA_SOURCE": str(metadata),
-            "PETLIBRO_DEVICE_DISCOVERY_SOURCE": str(discovery),
-            "PETLIBRO_LOGGING_SOURCE": str(logging_source),
-            "PETLIBRO_FEEDER_MQTT_VALIDATION_SOURCE": str(
-                feeder_mqtt_validation
-            ),
+            environment_name: str(sources[filename])
+            for filename, environment_name in module_environment_names.items()
         }
         go2rtc_changed = render_config.render_go2rtc(options, data_dir, TEMPLATES)
         with patch.dict(os.environ, environment):
@@ -97,6 +115,38 @@ class RenderConfigTests(unittest.TestCase):
                 options, data_dir, TEMPLATES
             )
         return go2rtc_changed, appdaemon_changed
+
+    def test_renders_all_runtime_module_links(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            options = self.options(devices=[self.manual_device()])
+            render_config.validate(options)
+            self.render_all(options, data_dir)
+
+            app_dir = data_dir / "appdaemon" / "apps"
+            expected_modules = {
+                "plaf203.py",
+                "backend.py",
+                "camera_metadata.py",
+                "commands.py",
+                "device_discovery.py",
+                "feed_plans.py",
+                "feeder_mqtt_validation.py",
+                "ha_entities.py",
+                "mqtt_client.py",
+                "petlibro_logging.py",
+                "protocol.py",
+                "settings_map.py",
+                "state_agent.py",
+                "state_coordinator.py",
+                "storage.py",
+                "telemetry.py",
+            }
+            self.assertEqual(
+                expected_modules,
+                {path.name for path in app_dir.glob("*.py")},
+            )
+            self.assertTrue(all(path.is_symlink() for path in app_dir.glob("*.py")))
 
     def test_renders_discovery_and_direct_ip_stream_without_leaking_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -124,6 +174,14 @@ class RenderConfigTests(unittest.TestCase):
             self.assertIn('device_uid: "PLAF20300000000ABCD0"', apps)
             self.assertIn("persist_feeder_mqtt: false", apps)
             self.assertIn('feeder_mqtt_host: ""', apps)
+            self.assertIn(
+                'petlibro_state_agent_url: "http://192.0.2.100:8765"', apps
+            )
+            self.assertIn(
+                "petlibro_state_agent_token: !secret petlibro_state_agent_token",
+                apps,
+            )
+            self.assertNotIn("top-secret-state-token", apps)
             self.assertNotIn("\n  mqtt_host:", apps)
             self.assertEqual(2, apps.count('petlibro_log_level: "info"'))
             self.assertNotIn("\n  log_level:", apps)
@@ -141,6 +199,31 @@ class RenderConfigTests(unittest.TestCase):
             self.assertEqual(
                 0o600, (data_dir / "appdaemon-secrets.yaml").stat().st_mode & 0o777
             )
+
+    def test_state_agent_url_template_and_secret_rendering(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            options = self.options(devices=[self.manual_device()])
+            options["petlibro_state_agent_url"] = "http://{ip}:9876"
+            options["petlibro_state_agent_token"] = "top-secret-state-token"
+            render_config.validate(options)
+            self.render_all(options, data_dir)
+
+            apps = (data_dir / "apps.yaml").read_text(encoding="utf-8")
+            secrets = (data_dir / "appdaemon-secrets.yaml").read_text(
+                encoding="utf-8"
+            )
+            registry = (data_dir / "devices.json").read_text(encoding="utf-8")
+            self.assertIn(
+                'petlibro_state_agent_url: "http://192.0.2.100:9876"', apps
+            )
+            self.assertIn(
+                "petlibro_state_agent_token: !secret petlibro_state_agent_token",
+                apps,
+            )
+            self.assertIn("top-secret-state-token", secrets)
+            self.assertNotIn("top-secret-state-token", apps)
+            self.assertNotIn("top-secret-state-token", registry)
 
     def test_renders_multiple_resolved_streams(self):
         with tempfile.TemporaryDirectory() as temporary:

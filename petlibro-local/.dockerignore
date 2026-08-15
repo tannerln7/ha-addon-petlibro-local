@@ -6,6 +6,16 @@
 **/*.py[cod]
 .pytest_cache
 **/.pytest_cache
+.mypy_cache
+**/.mypy_cache
+.ruff_cache
+**/.ruff_cache
+.tox
+**/.tox
+.nox
+**/.nox
+*.egg-info
+**/*.egg-info
 
 tmp
 **/tmp
@@ -24,9 +34,13 @@ debug_dumps
 
 .coverage
 coverage.xml
+coverage.json
+junit.xml
 htmlcov
 **/.coverage
 **/coverage.xml
+**/coverage.json
+**/junit.xml
 **/htmlcov
 
 /go2rtc/go2rtc

@@ -38,6 +38,9 @@ Known limitations:
 - An unreachable feeding-audio URL can cause some feeder firmware to restart.
 - The button auto-lock controls and recorded SD-card video format are not fully
   understood.
+- The feeder state API does not yet expose feeding-audio URL or auto-lock
+  threshold state, so those two persistent writes are blocked rather than
+  treated as successful from an MQTT acknowledgement alone.
 
 ## Prerequisites
 
@@ -45,6 +48,7 @@ Known limitations:
 - Home Assistant with its MQTT integration enabled
 - AppDaemon 4 with the MQTT plugin configured under the `mqtt` namespace
 - A local MQTT broker reachable by both AppDaemon and the feeder
+- The read-only Petlibro state agent running on the feeder
 - Local DNS or equivalent network routing that directs the feeder's Petlibro
   MQTT hostname to the local broker
 
@@ -54,16 +58,20 @@ captures or AppDaemon configuration containing a real device serial.
 
 ## Installation
 
-1. Copy [`src/plaf203.py`](src/plaf203.py) into your AppDaemon `apps` directory.
+1. Copy every Python module from [`src/`](src/) into the same AppDaemon `apps`
+   directory. `plaf203.py` imports its sibling protocol, coordinator, command,
+   state, and telemetry modules at runtime.
 2. Copy the `plaf203` block from
    [`src/apps.example.yaml`](src/apps.example.yaml) into your AppDaemon
    `apps.yaml`.
 3. Set `serial_number` to the feeder's `DL_DEVICE_ID`. Configure AppDaemon's
    MQTT plugin separately with the broker connection used by the controller.
-4. Leave `persist_feeder_mqtt` disabled unless intentionally migrating the
+4. Add `petlibro_state_agent_token` to AppDaemon's `secrets.yaml` and configure
+   the feeder state-agent URL shown below.
+5. Leave `persist_feeder_mqtt` disabled unless intentionally migrating the
    physical feeder to a durable LAN broker address.
-5. Reload AppDaemon and inspect its log for `Initializing plaf203`.
-6. Power on the feeder and confirm that `dl/PLAF203/<serial>/device/...` topics
+6. Reload AppDaemon and inspect its log for `Initializing plaf203`.
+7. Power on the feeder and confirm that `dl/PLAF203/<serial>/device/...` topics
    appear on the broker. Home Assistant should then discover a Petlibro feeder
    through MQTT.
 
@@ -80,6 +88,9 @@ That file is ignored intentionally; only the placeholder example is tracked.
 | `feeder_mqtt_host` | when enabled | empty | Stable LAN IP or multi-label DNS name advertised to the feeder |
 | `feeder_mqtt_port` | no | `1883` | Broker TCP port advertised to the feeder |
 | `feeder_https_addr` | no | empty | Optional API endpoint included in the explicit update |
+| `petlibro_state_agent_url` | yes | — | Read-only feeder truth API; packaged installs derive it from discovered IP |
+| `petlibro_state_agent_token` | yes | — | Bearer token loaded from AppDaemon secrets |
+| `petlibro_state_agent_timeout_seconds` | no | `2` | Local API request timeout |
 | `tutk_p2p_region` | no | `REGION_US` | TUTK region sent during device configuration sync |
 | `petlibro_log_level` | no | `info` | Petlibro application threshold: `critical`, `error`, `warning`, `info`, `debug`, or `trace` |
 
@@ -99,6 +110,9 @@ plaf203:
   feeder_mqtt_host: ''
   feeder_mqtt_port: 1883
   feeder_https_addr: ''
+  petlibro_state_agent_url: 'http://192.0.2.100:8765'
+  petlibro_state_agent_token: !secret petlibro_state_agent_token
+  petlibro_state_agent_timeout_seconds: 2
   tutk_p2p_region: 'REGION_US'
   petlibro_log_level: 'info'
 ```
@@ -123,31 +137,30 @@ correction times out.
 ## Feeding plans
 
 Home Assistant exposes nine **Feeding schedule** slots as JSON text entities. This example
-runs every day at 19:00, disables feeding audio, and dispenses three portions:
+runs every day at 19:00 and dispenses three portions:
 
 ```json
-{"id":1,"execution_time":{"hour":19,"minute":0},"scheduled_days":["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],"enable_audio":false,"play_audio_times":1,"grain_num":3}
+{"id":1,"execution_time":{"hour":19,"minute":0},"scheduled_days":["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],"grain_num":3}
 ```
 
 The JSON `id` must match the Home Assistant slot number: Feeding schedule 1 uses
 `"id":1`, Feeding schedule 2 uses `"id":2`, and so on through Feeding schedule 9. A
-slot/ID mismatch is rejected without changing the stored schedule. After a
-valid update, the add-on persists the complete desired schedule, republishes
-the retained state for all configured slots, and sends the schedule to the
-feeder. Refreshing Home Assistant therefore keeps the accepted value.
+slot/ID mismatch is rejected without changing the feeder schedule. The plan ID
+must already exist in the feeder state API; add/delete is not currently
+supported.
 
 JSON numbers must not contain leading zeroes: use `{"hour":7,"minute":1}`
 for 07:01 and `{"hour":7,"minute":0}` for 07:00. Invalid JSON is rejected
 without changing the stored or device schedule; the warning reports the error
 location and payload length without logging the schedule itself.
 
-On startup, the controller synchronizes a feeding plan only when its persistent
-state contains at least one configured plan. A newly initialized empty state is
-not sent to the feeder, so first contact cannot clear an existing device
-schedule. An explicit schedule update remains authoritative; explicitly setting
-an empty collection clears the feeder schedule. AppDaemon stores this state in
-the persistent `plaf203` namespace, so configured plans and the manual-feed
-portion default survive add-on restarts.
+On startup, the controller reads `/v1/core` and publishes the feeder's local
+plans to Home Assistant without writeback. For every edit it reads a fresh
+collection, changes only time/days/portions, and preserves the API's opaque
+`enabled_raw` and `bowl_or_target_raw` values. It then sends the full collection
+and verifies the complete result through `/v1/core` after the MQTT ack. Stored
+or retained Home Assistant plan JSON is never a command source. If the API is
+unavailable or verification disagrees, feeder-local state wins.
 
 ## Bowl configuration and portions
 

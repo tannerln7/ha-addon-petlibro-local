@@ -18,6 +18,13 @@ plaf203:
   feeder_mqtt_port: 1883
   feeder_https_addr: ''
 
+  # Read-only feeder truth API. The packaged renderer derives the URL from the
+  # discovered feeder IP; standalone installs should set it explicitly. Keep
+  # the bearer token in AppDaemon secrets, never in this tracked example.
+  petlibro_state_agent_url: 'http://192.0.2.100:8765'
+  petlibro_state_agent_token: !secret petlibro_state_agent_token
+  petlibro_state_agent_timeout_seconds: 2
+
   # Firmware 3.1.48+ region used only by an enabled endpoint update.
   tutk_p2p_region: 'REGION_US'
 

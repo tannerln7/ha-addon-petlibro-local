@@ -106,11 +106,30 @@ schedule 9. The
 add-on rejects a mismatch and logs `feeding-plan slot/id mismatch ignored`
 without logging the schedule contents.
 
-For a valid update, a debug log reports `feeding plan update accepted`. The
-add-on persists the desired schedule, republishes the retained MQTT state, and
-sends the full schedule to the feeder. If the UI still restores an older value,
-confirm that Home Assistant is running the current add-on version and inspect
-the add-on log for either of those messages.
+The slot must already exist in the feeder's `/v1/core` plan collection. The
+controller does not create or delete plans. A valid update logs a pending write,
+performs a fresh full-state preflight, waits for the matching MQTT ack, and then
+logs `persistent feeder write verified` only after `/v1/core` contains the
+complete expected collection.
+
+If the UI restores an older value, that is intentional when verification
+failed: feeder-local truth wins. Look for `feed-plan preflight`, `state API
+unavailable`, `persistent feeder state diverged`, or `persistent feeder write
+failed`. Do not republish retained plan JSON as a workaround; retained and
+stored Home Assistant schedules are deliberately ignored as command sources.
+
+## Persistent controls are unavailable
+
+The camera and required feeder MQTT responses can remain active while the
+read-only state API is unavailable, but persistent settings and plans are
+blocked. Confirm the state agent responds from the add-on network at
+`http://FEEDER_IP:8765/health`, that `petlibro_state_agent_token` matches its
+bearer token, and that a custom `petlibro_state_agent_url` does not point to a
+stale address. Never paste the token into logs or issue reports.
+
+At `debug` level, a healthy recovery shows `feeder state API recovered`, a
+transition through `RECONCILING`, and `feeder reconciliation complete`. HTTP
+authentication failures are reported by type without exposing the token.
 
 ## Initial 640x360 stream before HD
 

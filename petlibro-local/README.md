@@ -19,11 +19,18 @@ to force one, and expect high CPU use while it runs on a low-resource system.
 
 ## Before starting
 
-Configure the MQTT broker and feeder LAN subnet on the **Configuration** tab.
+Configure the MQTT broker, feeder LAN subnet, and feeder state-agent bearer
+token on the **Configuration** tab. The read-only state agent must be available
+on port `8765` of the discovered feeder address unless a custom URL is set.
 Start the add-on, then reboot or power-cycle the feeder. The backend discovers
 the serial from MQTT, the camera UID from `DEVICE_START_EVENT`, and the current
 IP with the UID-specific LAN_SEARCH3/KNOCK2 exchange. Open **Log** to follow
 discovery and stream setup.
+
+The controller reconciles `/v1/core` before publishing feeder settings or
+schedules to Home Assistant. When the state API is unavailable, persistent
+writes are blocked; retained Home Assistant values are never pushed back as a
+fallback.
 Discovery checks cached and broadcast targets first and uses one paced subnet
 fallback only when necessary, so an unavailable feeder cannot hold an
 AppDaemon callback open.

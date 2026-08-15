@@ -26,6 +26,15 @@ configuration:
   feeder_https_addr:
     name: Feeder HTTPS address
     description: Optional HTTPS endpoint written with the feeder MQTT destination. Leave empty to omit it from the update.
+  petlibro_state_agent_url:
+    name: Feeder state API URL
+    description: Optional read-only state-agent base URL. Leave empty to use port 8765 on each discovered feeder IP, or use {ip} in a custom per-device URL.
+  petlibro_state_agent_token:
+    name: Feeder state API token
+    description: Bearer token configured in the feeder-side read-only state agent. It is written only to the private AppDaemon secrets file.
+  petlibro_state_agent_timeout_seconds:
+    name: Feeder state API timeout
+    description: Per-request timeout for local feeder truth reads and write verification.
   device_discovery:
     name: Device discovery
     description: Discover feeder serials and camera UIDs from MQTT, then resolve camera addresses on the LAN.

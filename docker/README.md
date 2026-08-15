@@ -28,6 +28,13 @@ Edit `docker/.env` with the broker address and the feeder network in
 `LAN_CIDR`. Serial, UID, and IP are discovered automatically. The file is
 ignored by Git.
 
+Set `PETLIBRO_STATE_AGENT_TOKEN` to the bearer token used by the read-only
+state agent running on the feeder. Leave `PETLIBRO_STATE_AGENT_URL` empty to
+use `http://<discovered-feeder-ip>:8765`, or use a fixed URL / `{ip}` template
+for a custom deployment. Without a reachable authenticated state API, camera
+and required MQTT protocol handling can continue, but persistent feeder
+settings and schedule writes are intentionally unavailable.
+
 `MQTT_USERNAME` and `MQTT_PASSWORD` authenticate AppDaemon to the broker. The
 feeder uses its own factory/device MQTT account, which must be provisioned in
 the external broker separately; this backend does not accept or configure the

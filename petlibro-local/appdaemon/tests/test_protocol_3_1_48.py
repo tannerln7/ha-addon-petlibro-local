@@ -53,7 +53,13 @@ ATTR_PUSH_STORAGE_REQUEST = captured(
 ATTR_PUSH_RESPONSE = captured('ATTR_PUSH_EVENT', 'server_to_device')
 DEVICE_LOG_REQUEST = captured('DEVICE_LOG_REPORT_EVENT', 'device_to_server')
 sys.path.insert(0, str(ROOT / 'src'))
-import plaf203 as p
+import backend as backend_module
+import commands as command_module
+import ha_entities
+import mqtt_client
+import protocol as p
+import storage as storage_module
+from petlibro_logging import PetlibroLogger
 
 
 class FakeAd:
@@ -90,11 +96,11 @@ class ProtocolCompatibilityTests(unittest.TestCase):
     def setUp(self):
         self.ad = FakeAd()
         self.mqtt = FakeMqtt()
-        self.client = p.Client(self.ad, self.mqtt, 'SERIAL')
+        self.client = mqtt_client.Client(self.ad, self.mqtt, 'SERIAL')
 
     def test_home_assistant_discovery_identity_is_unique_per_serial(self):
-        first = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL_ONE')
-        second = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL_TWO')
+        first = ha_entities.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL_ONE')
+        second = ha_entities.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL_TWO')
 
         self.assertNotEqual(
             first._device_info_get()['identifiers'],
@@ -106,7 +112,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         )
 
     def test_resolution_discovery_uses_friendly_labels_without_changing_topics(self):
-        discovery = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL')
+        discovery = ha_entities.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL')
         discovery.discovery_issue()
 
         config = next(
@@ -133,7 +139,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         )
 
     def test_bowl_mode_discovery_exposes_writable_device_configuration(self):
-        discovery = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL')
+        discovery = ha_entities.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL')
         discovery.discovery_issue()
 
         config = next(
@@ -189,7 +195,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             device_start_event_send=lambda message: calls.append(('event', message.to_mqtt_payload())),
             device_config_sync_send=lambda message: calls.append(('service', message.to_mqtt_payload())),
         )
-        backend = p.Backend()
+        backend = backend_module.Backend()
         backend.client = fake_client
         backend.persist_feeder_mqtt = False
         backend.tutk_p2p_region = 'REGION_US'
@@ -203,15 +209,15 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertEqual(['event'], [channel for channel, _ in calls])
         self.assertEqual(boot.message_id.data, calls[0][1]['msgId'])
 
-    def test_boot_ack_precedes_explicit_feeder_mqtt_persistence(self):
+    def test_boot_ack_defers_explicit_persistence_to_controller_coordinator(self):
         calls = []
         fake_client = types.SimpleNamespace(
             device_start_event_send=lambda message: calls.append(('event', message.to_mqtt_payload())),
             device_config_sync_send=lambda message: calls.append(('service', message.to_mqtt_payload())),
         )
-        backend = p.Backend()
+        backend = backend_module.Backend()
         backend.client = fake_client
-        backend.logger = p.PetlibroLogger(self.ad, "petlibro.backend", "debug")
+        backend.logger = PetlibroLogger(self.ad, "petlibro.backend", "debug")
         backend.persist_feeder_mqtt = True
         backend.feeder_mqtt_host = 'mqtt.example.test'
         backend.feeder_mqtt_port = 1883
@@ -219,18 +225,15 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         backend.tutk_p2p_region = 'REGION_US'
         backend.device_info_callback = None
         backend.device_wifi_info_callback = None
+        backend.device_started_callback = lambda: calls.append(('ready', None))
         backend._device_timestamp_sync_drift_check_and_adjust = lambda timestamp: None
 
         boot = p.DeviceStartEventIn.from_mqtt_payload(BOOT_REQUEST['payload'])
         backend._device_start_event_cb(boot)
 
-        self.assertEqual(['event', 'service'], [channel for channel, _ in calls])
+        self.assertEqual(['event', 'ready'], [channel for channel, _ in calls])
         self.assertEqual(boot.message_id.data, calls[0][1]['msgId'])
-        self.assertEqual([{'host': 'mqtt.example.test', 'port': 1883}], calls[1][1]['mqttAddr'])
-        self.assertEqual('api.example.test', calls[1][1]['httpsAddr'])
-        self.assertEqual(
-            calls[1][1]['msgId'], backend.device_config_sync_pending_message_id
-        )
+        self.assertNotIn('service', [channel for channel, _ in calls])
 
     def test_device_config_sync_omits_unspecified_https_override(self):
         payload = p.DeviceConfigSyncOut.create(
@@ -259,15 +262,15 @@ class ProtocolCompatibilityTests(unittest.TestCase):
                 self.created.append((name, kwargs))
 
         ad = StorageAD()
-        storage = p.Storage(ad, 'plaf203', 'SERIAL')
+        storage = storage_module.Storage(ad, 'plaf203', 'SERIAL')
         storage.initialize()
-        self.assertEqual(2, len(ad.created))
+        self.assertEqual(1, len(ad.created))
         self.assertTrue(all(
             created[1]["check_existence"] is False
             for created in ad.created
         ))
 
-    def _heartbeat_backend(self, food_plans):
+    def _heartbeat_backend(self):
         calls = []
         client = types.SimpleNamespace(
             get_config_send=lambda message: calls.append(
@@ -276,19 +279,15 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             attr_get_service_send=lambda message: calls.append(
                 ('attr_get', message.to_mqtt_payload())
             ),
-            feeding_plan_service_send=lambda message: calls.append(
-                ('feeding_plan', message.to_mqtt_payload())
-            ),
             ntp_sync_send=lambda message: calls.append(
                 ('ntp_sync', message.to_mqtt_payload())
             ),
         )
-        backend = p.Backend()
+        backend = backend_module.Backend()
         backend.ad = self.ad
-        backend.logger = p.PetlibroLogger(self.ad, "petlibro.backend", "debug")
+        backend.logger = PetlibroLogger(self.ad, "petlibro.backend", "debug")
         backend.client = client
         backend.device_serial = 'SERIAL'
-        backend.food_plans = food_plans
         backend.last_heartbeat_count = 0
         backend.is_online = False
         backend.went_online_callback = None
@@ -298,13 +297,14 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         backend.ntp_sync_timeout_handle = None
         backend.device_info_callback = None
         backend.device_wifi_info_callback = None
+        backend.heartbeat_callback = None
         backend.heartbeat_watchdog = types.SimpleNamespace(
             reset=lambda: calls.append(('watchdog_reset', None))
         )
         return backend, calls
 
     def test_initial_heartbeat_drift_starts_one_correction_without_false_failure(self):
-        backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())
+        backend, calls = self._heartbeat_backend()
         statuses = []
         backend.ntp_sync_status_callback = statuses.append
         heartbeat_timestamp = p.Timestamp(
@@ -330,7 +330,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertIn(('watchdog_reset', None), calls)
 
     def test_ntp_correction_reports_failure_only_after_bad_ack_or_timeout(self):
-        backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())
+        backend, calls = self._heartbeat_backend()
         statuses = []
         backend.ntp_sync_status_callback = statuses.append
         stale = p.Timestamp(datetime.datetime(2020, 1, 2, tzinfo=datetime.timezone.utc))
@@ -358,7 +358,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertTrue(any("phase=timeout" in message for message in self.ad.logs))
 
     def test_heartbeat_offline_online_transitions_are_idempotent(self):
-        backend, _calls = self._heartbeat_backend(p.FoodPlans.create_empty())
+        backend, _calls = self._heartbeat_backend()
         online = []
         offline = []
         backend.went_online_callback = lambda: online.append(True)
@@ -377,43 +377,12 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertEqual([True], offline)
 
     def test_first_heartbeat_does_not_push_unconfigured_empty_plan(self):
-        backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())
+        backend, calls = self._heartbeat_backend()
         heartbeat = p.HeartbeatIn(p.Timestamp.now(), 1, -50, p.WifiType.TYPE_0)
 
         backend._heartbeat_cb(heartbeat)
 
         self.assertNotIn('feeding_plan', [name for name, _payload in calls])
-        self.assertTrue(
-            any(
-                "automatic feeding-plan sync skipped" in message
-                for message in self.ad.logs
-            )
-        )
-
-    def test_explicit_plan_update_sends_non_empty_plan(self):
-        backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())
-        plan = p.FoodPlan(
-            1,
-            p.HourMinTimestamp(datetime.time(19, 0)),
-            p.WeekdaySchedule.create(p.Weekday.MONDAY),
-            False,
-            1,
-            3,
-        )
-
-        backend.food_plans_set(p.FoodPlans.create(plan))
-
-        feeding_calls = [payload for name, payload in calls if name == 'feeding_plan']
-        self.assertEqual(1, len(feeding_calls))
-        self.assertEqual(1, feeding_calls[0]['plans'][0]['planId'])
-
-    def test_explicit_empty_plan_update_can_clear_schedule(self):
-        backend, calls = self._heartbeat_backend(p.FoodPlans.create_empty())
-
-        backend.food_plans_set(p.FoodPlans.create_empty())
-
-        feeding_calls = [payload for name, payload in calls if name == 'feeding_plan']
-        self.assertEqual([[]], [payload['plans'] for payload in feeding_calls])
 
     def test_device_config_response_parser_and_service_post_dispatch(self):
         request = DEVICE_CONFIG_REQUEST['payload']
@@ -435,30 +404,15 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.client._mqtt_recv_service_cb('', {'payload': json.dumps(response)}, {})
         self.assertEqual(response['msgId'], received[0].message_id.data)
 
-    def test_sparse_resolution_push_dispatches_only_camera_state(self):
-        calls = []
-        backend = p.Backend()
-        for callback_name in (
-            'settings_audio_callback',
-            'settings_camera_callback',
-            'settings_recording_callback',
-            'settings_motion_detection_callback',
-            'settings_sound_detection_callback',
-            'settings_cloud_video_recording_callback',
-            'settings_sound_callback',
-            'settings_button_lights_callback',
-            'state_power_callback',
-            'state_food_callback',
-            'device_sd_card_info_callback',
-            'settings_feeding_video_callback',
-            'settings_buttons_auto_lock_callback',
-            'settings_bowl_mode_callback',
-        ):
-            setattr(
-                backend,
-                callback_name,
-                lambda _name=callback_name, **kwargs: calls.append((_name, kwargs)),
-            )
+    def test_sparse_persistent_setting_push_only_requests_truth_refresh(self):
+        hints = []
+        backend = backend_module.Backend()
+        backend.capabilities_callback = None
+        backend.state_power_callback = None
+        backend.state_food_callback = None
+        backend.device_wifi_info_callback = None
+        backend.device_sd_card_info_callback = None
+        backend.persistent_state_hint_callback = lambda: hints.append(True)
         acknowledgements = []
         backend.client = types.SimpleNamespace(
             attr_push_event_send=acknowledgements.append
@@ -472,30 +426,17 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         })
         backend._attr_push_event_cb(sparse)
 
-        self.assertEqual(1, len(calls))
-        self.assertEqual('settings_camera_callback', calls[0][0])
-        self.assertEqual(p.Resolution.P720, calls[0][1]['resolution'])
+        self.assertEqual([True], hints)
         self.assertEqual(1, len(acknowledgements))
 
     def test_sparse_food_push_preserves_absent_boolean_fields(self):
         food_states = []
-        backend = p.Backend()
-        for callback_name in (
-            'settings_audio_callback',
-            'settings_camera_callback',
-            'settings_recording_callback',
-            'settings_motion_detection_callback',
-            'settings_sound_detection_callback',
-            'settings_cloud_video_recording_callback',
-            'settings_sound_callback',
-            'settings_button_lights_callback',
-            'state_power_callback',
-            'device_sd_card_info_callback',
-            'settings_feeding_video_callback',
-            'settings_buttons_auto_lock_callback',
-            'settings_bowl_mode_callback',
-        ):
-            setattr(backend, callback_name, None)
+        backend = backend_module.Backend()
+        backend.capabilities_callback = None
+        backend.state_power_callback = None
+        backend.device_wifi_info_callback = None
+        backend.device_sd_card_info_callback = None
+        backend.persistent_state_hint_callback = None
         backend.state_food_callback = lambda **kwargs: food_states.append(kwargs)
         backend.client = types.SimpleNamespace(attr_push_event_send=lambda message: None)
         backend._device_timestamp_sync_drift_check_and_adjust = lambda timestamp: None
@@ -513,28 +454,15 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             'low_fill_level': None,
         }], food_states)
 
-    def test_sparse_bowl_mode_push_dispatches_only_bowl_configuration(self):
-        bowl_modes = []
-        backend = p.Backend()
-        for callback_name in (
-            'settings_audio_callback',
-            'settings_camera_callback',
-            'settings_recording_callback',
-            'settings_motion_detection_callback',
-            'settings_sound_detection_callback',
-            'settings_cloud_video_recording_callback',
-            'settings_sound_callback',
-            'settings_button_lights_callback',
-            'state_power_callback',
-            'state_food_callback',
-            'device_sd_card_info_callback',
-            'settings_feeding_video_callback',
-            'settings_buttons_auto_lock_callback',
-        ):
-            setattr(backend, callback_name, None)
-        backend.settings_bowl_mode_callback = (
-            lambda **kwargs: bowl_modes.append(kwargs)
-        )
+    def test_sparse_bowl_mode_push_does_not_bypass_feeder_truth(self):
+        hints = []
+        backend = backend_module.Backend()
+        backend.capabilities_callback = None
+        backend.state_power_callback = None
+        backend.state_food_callback = None
+        backend.device_wifi_info_callback = None
+        backend.device_sd_card_info_callback = None
+        backend.persistent_state_hint_callback = lambda: hints.append(True)
         backend.client = types.SimpleNamespace(attr_push_event_send=lambda message: None)
         backend._device_timestamp_sync_drift_check_and_adjust = lambda timestamp: None
 
@@ -545,11 +473,11 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         })
         backend._attr_push_event_cb(sparse)
 
-        self.assertEqual([{'mode': p.BowlMode.SINGLE_BOWL}], bowl_modes)
+        self.assertEqual([True], hints)
 
     def test_bowl_mode_command_serializes_attr_set_without_food_quantity(self):
         sent = []
-        backend = p.Backend()
+        backend = backend_module.Backend()
         backend.client = types.SimpleNamespace(attr_set_service_send=sent.append)
 
         backend.settings_bowl_mode(p.BowlMode.DOUBLE_BOWL)
@@ -560,20 +488,34 @@ class ProtocolCompatibilityTests(unittest.TestCase):
 
     def test_bowl_mode_mqtt_command_reaches_backend(self):
         selected = []
-        controller = types.SimpleNamespace(
-            backend=types.SimpleNamespace(
-                settings_bowl_mode=lambda **kwargs: selected.append(kwargs)
+        requests = []
+        backend = types.SimpleNamespace(
+            settings_bowl_mode=lambda **kwargs: selected.append(kwargs)
+        )
+        coordinator = types.SimpleNamespace(
+            request_persistent_write=lambda request: (
+                requests.append(request), request.publisher(None)
             )
         )
-
-        p.Plaf203._mqtt_cmd_food_bowl_mode_cb(
-            controller,
-            '',
-            {'payload': 'DOUBLE_BOWL'},
-            {},
+        router = command_module.CommandRouter.__new__(command_module.CommandRouter)
+        router.backend = backend
+        router.coordinator = coordinator
+        router.logger = PetlibroLogger(self.ad, "petlibro.controller", "debug")
+        spec = next(
+            item for item in command_module.SETTING_COMMANDS
+            if item.topic == "food/cmd/bowl_mode"
         )
 
+        router._setting_handler(spec)('', {'payload': 'DOUBLE_BOWL'}, {})
+
         self.assertEqual([{'mode': p.BowlMode.DOUBLE_BOWL}], selected)
+        self.assertEqual(
+            [('food.bowl_mode', 'bowl_mode', 'dual_bowl')],
+            [
+                (request.control, request.predicate.field, request.target)
+                for request in requests
+            ],
+        )
 
     def test_dual_bowl_wire_alias_normalizes_to_double_bowl(self):
         parsed = p.AttrPushEventIn.from_mqtt_payload({
@@ -585,14 +527,11 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertEqual(p.BowlMode.DOUBLE_BOWL, parsed.bowl_mode)
 
     def test_invalid_feeding_plan_json_logs_position_without_payload(self):
-        controller = types.SimpleNamespace(
-            logger=p.PetlibroLogger(self.ad, "petlibro.controller", "debug"),
-        )
+        router = command_module.CommandRouter.__new__(command_module.CommandRouter)
+        router.logger = PetlibroLogger(self.ad, "petlibro.controller", "debug")
         invalid = '{"minute":01}'
 
-        p.Plaf203._mqtt_cmd_food_plans(
-            controller, '', {'payload': invalid}, {}, plan_slot=1
-        )
+        router.plan_handler(1)('', {'payload': invalid}, {})
 
         message = self.ad.logs[-1]
         self.assertIn('invalid feeding-plan JSON ignored', message)
@@ -601,88 +540,41 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertIn('payload_length=13', message)
         self.assertNotIn(invalid, message)
 
-    def test_all_nine_feeding_plan_slots_persist_publish_and_sync(self):
-        class PlanStorage:
-            def __init__(self):
-                self.current = p.FoodPlans.create_empty()
-                self.saved = []
-
-            def food_plans_get(self):
-                return self.current
-
-            def food_plans_set(self, food_plans):
-                self.current = food_plans
-                self.saved.append(food_plans.to_dict())
-
-        storage = PlanStorage()
-        feeder_syncs = []
-        state_publications = []
-        controller = types.SimpleNamespace(
-            storage=storage,
-            backend=types.SimpleNamespace(
-                food_plans_set=lambda food_plans: feeder_syncs.append(
-                    food_plans.to_dict()
-                )
-            ),
-            logger=p.PetlibroLogger(self.ad, "petlibro.controller", "debug"),
-            _mqtt_publish_dict=lambda topic, data, retain: state_publications.append(
-                (topic, data, retain)
-            ),
+    def test_all_nine_feeding_plan_slots_route_to_fresh_preflight(self):
+        requests = []
+        router = command_module.CommandRouter.__new__(command_module.CommandRouter)
+        router.coordinator = types.SimpleNamespace(
+            request_persistent_write=lambda request: requests.append(request) or True
         )
-        controller._food_plans_set = types.MethodType(
-            p.Plaf203._food_plans_set,
-            controller,
-        )
+        router.backend = types.SimpleNamespace()
+        router.logger = PetlibroLogger(self.ad, "petlibro.controller", "debug")
 
         for plan_slot in range(1, 10):
             payload = {
                 'id': plan_slot,
                 'execution_time': {'hour': 6 + plan_slot, 'minute': plan_slot},
                 'scheduled_days': ['MONDAY'],
-                'enable_audio': False,
-                'play_audio_times': 1,
                 'grain_num': plan_slot,
             }
-            p.Plaf203._mqtt_cmd_food_plans(
-                controller,
-                '',
-                {'payload': json.dumps(payload)},
-                {},
-                plan_slot=plan_slot,
+            router.plan_handler(plan_slot)(
+                '', {'payload': json.dumps(payload)}, {}
             )
 
-        self.assertEqual(9, len(storage.saved))
-        self.assertEqual(9, len(feeder_syncs))
+        self.assertEqual(9, len(requests))
         self.assertEqual(list(range(1, 10)), [
-            plan['id'] for plan in storage.current.to_dict()['plans']
+            request.plan_patch.plan_id for request in requests
         ])
-        latest_by_topic = {
-            topic: (payload, retain)
-            for topic, payload, retain in state_publications
-        }
-        for plan_slot in range(1, 10):
-            topic = 'food/plan_{}'.format(plan_slot)
-            self.assertIn(topic, latest_by_topic)
-            self.assertEqual(plan_slot, latest_by_topic[topic][0]['id'])
-            self.assertTrue(latest_by_topic[topic][1])
-        self.assertEqual(9, sum(
-            'feeding plan update accepted' in message
-            for message in self.ad.logs
-        ))
+        self.assertTrue(all(request.requires_fresh_preflight for request in requests))
+        self.assertTrue(all(request.plan_patch is not None for request in requests))
 
     def test_feeding_plan_slot_id_mismatch_is_rejected(self):
         writes = []
-        controller = types.SimpleNamespace(
-            storage=types.SimpleNamespace(
-                food_plans_get=lambda: p.FoodPlans.create_empty(),
-                food_plans_set=lambda food_plans: writes.append('storage'),
-            ),
-            backend=types.SimpleNamespace(
-                food_plans_set=lambda food_plans: writes.append('backend')
-            ),
-            logger=p.PetlibroLogger(self.ad, "petlibro.controller", "debug"),
-            _food_plans_set=lambda food_plans: writes.append('state'),
+        router = command_module.CommandRouter.__new__(command_module.CommandRouter)
+        router.coordinator = types.SimpleNamespace(
+            request_persistent_write=lambda request: writes.append(request)
         )
+        router.backend = types.SimpleNamespace()
+        router.logger = PetlibroLogger(self.ad, "petlibro.controller", "debug")
         payload = {
             'id': 1,
             'execution_time': {'hour': 7, 'minute': 0},
@@ -692,13 +584,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             'grain_num': 1,
         }
 
-        p.Plaf203._mqtt_cmd_food_plans(
-            controller,
-            '',
-            {'payload': json.dumps(payload)},
-            {},
-            plan_slot=2,
-        )
+        router.plan_handler(2)('', {'payload': json.dumps(payload)}, {})
 
         self.assertEqual([], writes)
         message = self.ad.logs[-1]
@@ -708,19 +594,18 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertNotIn(json.dumps(payload), message)
 
     def test_feeding_plan_subscriptions_bind_each_slot(self):
-        controller = p.Plaf203.__new__(p.Plaf203)
+        router = command_module.CommandRouter.__new__(command_module.CommandRouter)
         subscriptions = []
         received_slots = []
-        controller._mqtt_subscribe = (
+        router._subscribe = (
             lambda topic, callback: subscriptions.append((topic, callback))
         )
-        controller._mqtt_cmd_food_plans = (
-            lambda eventname, data, kwargs, *, plan_slot: received_slots.append(
-                plan_slot
-            )
+        router.plan_handler = lambda plan_slot: (
+            lambda eventname, data, kwargs: received_slots.append(plan_slot)
         )
+        router.backend = types.SimpleNamespace()
 
-        controller._user_input_topics_subscribe()
+        router.start()
 
         plan_subscriptions = [
             (topic, callback)
@@ -736,17 +621,12 @@ class ProtocolCompatibilityTests(unittest.TestCase):
                 'food/cmd/plan_{}'.format(expected_slot),
                 topic,
             )
-            self.assertEqual(
-                '_mqtt_cmd_food_plan_{}_cb'.format(expected_slot),
-                callback.__name__,
-            )
-            self.assertEqual(expected_slot, callback.plan_slot)
             callback('', {'payload': '{}'}, {})
 
         self.assertEqual(list(range(1, 10)), received_slots)
 
     def test_discovery_labels_do_not_change_backend_contract(self):
-        discovery = p.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL')
+        discovery = ha_entities.HomeAssistantDiscoveryMqtt(self.mqtt, 'SERIAL')
         discovery.discovery_issue()
 
         configs = {
@@ -788,34 +668,23 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             plan['state_topic'],
         )
 
-    def test_device_config_acknowledgement_requires_matching_pending_request(self):
-        backend = p.Backend()
-        backend.logger = p.PetlibroLogger(self.ad, "petlibro.backend", "debug")
-        backend.persist_feeder_mqtt = True
-        backend.feeder_mqtt_host = 'mqtt.example.test'
-        backend.feeder_mqtt_port = 1883
-        backend.device_config_sync_pending_message_id = 'expected-config-id'
+    def test_device_config_acknowledgement_is_forwarded_for_coordinator_matching(self):
+        backend = backend_module.Backend()
+        backend.logger = PetlibroLogger(self.ad, "petlibro.backend", "debug")
         backend._device_timestamp_sync_drift_check_and_adjust = lambda timestamp: None
         errors = []
+        acknowledgements = []
         backend._error_report = errors.append
+        backend.device_config_ack_callback = acknowledgements.append
 
         backend._device_config_sync_cb(p.DeviceConfigSyncIn(
             p.MessageId('stale-config-id'), p.Timestamp.now(), p.Code.OK
         ))
-        self.assertEqual(
-            'expected-config-id', backend.device_config_sync_pending_message_id
-        )
-        self.assertFalse(any(
-            'persistence acknowledged' in message for message in self.ad.logs
-        ))
 
-        backend._device_config_sync_cb(p.DeviceConfigSyncIn(
-            p.MessageId('expected-config-id'), p.Timestamp.now(), p.Code.OK
-        ))
-        self.assertIsNone(backend.device_config_sync_pending_message_id)
-        self.assertTrue(any(
-            'persistence acknowledged' in message for message in self.ad.logs
-        ))
+        self.assertEqual(1, len(acknowledgements))
+        self.assertEqual('stale-config-id', acknowledgements[0].message_id)
+        self.assertEqual(p.Commands.DEVICE_CONFIG_SYNC, acknowledgements[0].ack_kind)
+        self.assertTrue(acknowledgements[0].success)
         self.assertEqual([], errors)
 
     def test_get_plan_and_grain_ack_use_event_sub_and_echo_fields(self):
@@ -891,11 +760,8 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.client._mqtt_recv_event_cb('', {'payload': json.dumps(request)}, {})
         self.assertIn('ignored device log report', self.ad.logs[-1])
 
-    def test_adjacent_runtime_name_fixes(self):
+    def test_hour_minute_wire_parser_handles_late_hour(self):
         self.assertEqual(23, p.HourMinTimestamp.from_mqtt_payload_value('23:00').time.hour)
-        message = p.ServerConfigPushOut(p.MessageId('id'), p.Timestamp.now(), '10')
-        self.client.server_config_push_send(message)
-        self.assertEqual(p.Commands.SERVER_CONFIG_PUSH, self.mqtt.published[0][1]['cmd'])
 
 
 if __name__ == '__main__':

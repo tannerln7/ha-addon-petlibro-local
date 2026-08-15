@@ -630,7 +630,7 @@ QoS 1 PUBLISH and cannot replace the command-level responses above.
 ## Implementation status
 
 The capture-backed compatibility work described in this document is implemented
-in `src/plaf203.py` and covered by the sanitized fixtures in `tests/`:
+in `src/protocol.py` and covered by the sanitized fixtures in `tests/`:
 
 - `GET_FEEDING_PLAN_EVENT` and `GRAIN_OUTPUT_EVENT` responses use `event/sub`.
 - `NTP` and `NTP_SYNC` serialize the current timezone offset and the next two

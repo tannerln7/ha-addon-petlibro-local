@@ -122,6 +122,37 @@ from feeder-facing settings. Any new persistence path must preserve the
 default no-sync behavior and pass DNS answers through the address policy and
 bounded TCP reachability checks before sending `DEVICE_CONFIG_SYNC`.
 
+`appdaemon/src/state_agent.py` is the blocking, read-only HTTP boundary for the
+feeder truth API. Keep its errors sanitized, its bearer token private, and its
+response models explicit. Calls belong in AppDaemon's executor, never the main
+callback thread.
+
+`appdaemon/src/state_coordinator.py` is the only owner of persistent feeder
+truth, revisions, pending writes, and plan collections. Do not reintroduce a
+plan cache in `Backend`, read AppDaemon storage to build a command, or update
+truth from an intended target. Plan writes must retain the fresh-core preflight
+and complete-collection verification invariants. Add transition and failure
+tests for any coordinator change; executor completion tests must invoke the
+AppDaemon `callback(result=...)` form.
+
+The controller runtime is intentionally split by responsibility:
+
+| Module | Boundary |
+|---|---|
+| `plaf203.py` | Thin AppDaemon lifecycle and dependency wiring |
+| `mqtt_client.py` / `protocol.py` | MQTT transport and PLAF203 wire models |
+| `backend.py` | Required feeder protocol responses, low-level commands, acknowledgements, and telemetry callbacks; never feeder truth |
+| `ha_entities.py` | MQTT discovery plus projection of verified truth into retained HA state |
+| `settings_map.py` / `commands.py` | Canonical value mappings and user-intent routing into coordinator requests |
+| `feed_plans.py` | Plan parsing, full-collection wire serialization, and HA display projection |
+| `telemetry.py` | Non-persistent operational state such as Wi-Fi, power, food, and SD-card status |
+| `storage.py` | Manual-feed preference and a stale diagnostic snapshot only |
+
+Keep persistent-state changes on the path `commands -> state_coordinator ->
+backend`. Acknowledgements return from `backend` to the coordinator, and only a
+verified State Agent response reaches `HomeAssistantStatePublisher` as feeder
+truth.
+
 ## Updating imported components
 
 Edit and test the files in this repository directly. If a historical source

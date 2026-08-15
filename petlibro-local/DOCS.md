@@ -69,6 +69,9 @@ and `device_ip` options are migrated into this registry when all three exist.
 | `feeder_mqtt_host` | empty | Stable LAN IP or multi-label DNS name reachable by the feeder |
 | `feeder_mqtt_port` | `1883` | Feeder-facing broker TCP port |
 | `feeder_https_addr` | empty | Optional HTTPS endpoint included only in an explicit feeder update |
+| `petlibro_state_agent_url` | empty | Optional state API URL; empty derives `http://<feeder-ip>:8765`, and `{ip}` is supported |
+| `petlibro_state_agent_token` | empty | Bearer token configured in the feeder-side read-only state agent |
+| `petlibro_state_agent_timeout_seconds` | `2` | Local API request timeout, from 1 to 10 seconds |
 
 These credentials authenticate the backend to the broker. They do not provision
 the feeder or replace its factory-provisioned broker credentials. The feeder's
@@ -120,10 +123,20 @@ shows **Always active** / **Scheduled** for the protocol aging modes, **720p** /
 **1080p** for camera resolution, and **Single bowl** / **Dual bowl** for bowl
 setup while MQTT continues to carry the original enum values.
 
+Persistent controls become available only after the controller has read the
+feeder-side state API and mirrored its `/v1/core` result. Home Assistant state
+is not used as feeder truth. If the API becomes unreachable, the controller
+keeps MQTT heartbeat handling active but blocks setting and plan writes until a
+fresh reconciliation succeeds.
+
 The nine **Feeding schedule** text entities accept flat JSON. Each document's
-`id` must match its displayed slot number. Accepted edits are persisted,
-republished to retained state, and synchronized to the feeder; a refresh should
-therefore keep the new value.
+`id` must match its displayed slot number and must already exist on the feeder.
+The user-editable fields are `execution_time`, `scheduled_days`, and
+`grain_num`; legacy audio fields are ignored because their meanings are not
+verified. Every edit preflights a fresh full plan collection, preserves opaque
+feeder-owned fields, sends the entire collection, and verifies the entire
+collection through `/v1/core` after the MQTT acknowledgement. A retained or
+stored Home Assistant value is never used to construct the command.
 
 ## Camera metadata publishing
 

@@ -4,7 +4,15 @@
 
 | Path | Purpose |
 |---|---|
-| `src/plaf203.py` | AppDaemon application, MQTT protocol model, and Home Assistant discovery |
+| `src/plaf203.py` | Thin AppDaemon lifecycle and component wiring |
+| `src/state_agent.py` | Authenticated read-only feeder API client and response models |
+| `src/state_coordinator.py` | Sole persistent feeder-truth authority and write-verification state machine |
+| `src/mqtt_client.py` / `src/protocol.py` | MQTT transport and firmware wire models |
+| `src/backend.py` | Low-level protocol lifecycle, commands, acknowledgements, and telemetry callbacks |
+| `src/settings_map.py` / `src/commands.py` | Declarative value mappings and user-intent routing |
+| `src/feed_plans.py` | Plan parsing, opaque-field-preserving serialization, and HA projection |
+| `src/ha_entities.py` / `src/telemetry.py` | Discovery, verified truth mirroring, and operational telemetry |
+| `src/storage.py` | Manual-feed preference and stale diagnostics only; never feeder truth |
 | `src/apps.example.yaml` | Safe configuration template for local AppDaemon setup |
 | `tests/test_protocol_3_1_48.py` | Protocol and regression tests for firmware 3.1.48 behavior |
 | `tests/fixtures/` | Synthetic, sanitized protocol examples used by tests |
@@ -24,9 +32,16 @@ python3 -m venv .venv
 python -m pip install -r requirements-dev.txt
 ```
 
-AppDaemon is a development dependency because importing `src/plaf203.py`
-requires its application and MQTT APIs. The test suite does not require a live
-feeder, broker, Home Assistant instance, or internet connection.
+AppDaemon is a development dependency because the runtime modules import its
+application and MQTT APIs. The test suite does not require a live feeder,
+broker, Home Assistant instance, or internet connection.
+
+Persistent setting changes must follow one auditable path: `commands.py`
+creates a semantic coordinator request, `state_coordinator.py` preflights or
+publishes it through `backend.py`, and a matching MQTT acknowledgement is
+followed by State Agent readback. Only verified feeder truth may update
+`ha_entities.py`. Retained HA state and `storage.py` must never be used to
+construct a persistent command.
 
 ## Run the tests
 
@@ -70,7 +85,7 @@ Run:
 ```bash
 python -m pytest -q
 python -m unittest discover -s tests -v
-python -m py_compile src/plaf203.py tests/test_protocol_3_1_48.py
+python -m py_compile src/*.py tests/test_protocol_3_1_48.py
 git diff --check
 ```
 
