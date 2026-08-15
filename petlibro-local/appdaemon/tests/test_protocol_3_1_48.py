@@ -429,6 +429,99 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.assertEqual([True], hints)
         self.assertEqual(1, len(acknowledgements))
 
+    def test_sparse_sound_push_without_wifi_is_acknowledged_and_hints_truth_refresh(self):
+        order = []
+        capability_states = []
+        backend = backend_module.Backend()
+        backend.logger = PetlibroLogger(self.ad, "petlibro.backend", "debug")
+        backend.capabilities_callback = lambda values: (
+            order.append("telemetry"), capability_states.append(values)
+        )
+        backend.state_power_callback = None
+        backend.state_food_callback = None
+        backend.device_wifi_info_callback = lambda **_kwargs: self.fail(
+            "absent Wi-Fi telemetry was emitted"
+        )
+        backend.device_sd_card_info_callback = None
+        backend.persistent_state_hint_callback = lambda: order.append("hint")
+        backend.client = types.SimpleNamespace(
+            attr_push_event_send=lambda _message: order.append("ack")
+        )
+        backend._device_timestamp_sync_drift_check_and_adjust = lambda _timestamp: None
+
+        sparse = p.AttrPushEventIn.from_mqtt_payload({
+            "cmd": "ATTR_PUSH_EVENT",
+            "msgId": "sound-only",
+            "ts": p.Timestamp.now().to_timestamp_epoch_ms(),
+            "soundSwitch": True,
+            "enableSound": True,
+        })
+        backend._attr_push_event_cb(sparse)
+
+        self.assertEqual(["ack", "hint", "telemetry"], order)
+        self.assertTrue(sparse.has("soundSwitch"))
+        self.assertFalse(sparse.has("wifiSsid"))
+        self.assertIsNone(sparse.get("wifiSsid"))
+        self.assertEqual(
+            True, capability_states[0]["sound/feature_enabled"]
+        )
+        self.assertNotIn("sound/enable", capability_states[0])
+
+    def test_sparse_mixed_push_preserves_field_names_not_sensitive_values(self):
+        sensitive_value = "sensitive-camera-auth-value"
+        sparse = p.AttrPushEventIn.from_mqtt_payload({
+            "cmd": "ATTR_PUSH_EVENT",
+            "msgId": "mixed-sparse",
+            "ts": p.Timestamp.now().to_timestamp_epoch_ms(),
+            "soundSwitch": True,
+            "enableSound": True,
+            "nightVision": "CLOSE",
+            "cameraAuthInfo": sensitive_value,
+            "futureUnknownField": 42,
+        })
+
+        self.assertTrue(sparse.sound_switch)
+        self.assertTrue(sparse.enable_sound)
+        self.assertEqual(p.NightVision.CLOSE, sparse.night_vision)
+        self.assertTrue(sparse.has("cameraAuthInfo"))
+        self.assertTrue(sparse.has("futureUnknownField"))
+        self.assertEqual(42, sparse.get("futureUnknownField"))
+        self.assertEqual(sensitive_value, sparse.get("cameraAuthInfo"))
+        self.assertNotIn(sensitive_value, repr(sparse))
+
+    def test_optional_telemetry_failure_cannot_prevent_push_ack_or_hint(self):
+        order = []
+        backend = backend_module.Backend()
+        backend.logger = PetlibroLogger(self.ad, "petlibro.backend", "debug")
+
+        def fail_telemetry(_values):
+            order.append("telemetry")
+            raise RuntimeError("synthetic telemetry failure")
+
+        backend.capabilities_callback = fail_telemetry
+        backend.state_power_callback = None
+        backend.state_food_callback = None
+        backend.device_wifi_info_callback = None
+        backend.device_sd_card_info_callback = None
+        backend.persistent_state_hint_callback = lambda: order.append("hint")
+        backend.client = types.SimpleNamespace(
+            attr_push_event_send=lambda _message: order.append("ack")
+        )
+        backend._device_timestamp_sync_drift_check_and_adjust = lambda _timestamp: None
+
+        sparse = p.AttrPushEventIn.from_mqtt_payload({
+            "msgId": "telemetry-failure",
+            "ts": p.Timestamp.now().to_timestamp_epoch_ms(),
+            "enableSound": True,
+        })
+        backend._attr_push_event_cb(sparse)
+
+        self.assertEqual(["ack", "hint", "telemetry"], order)
+        self.assertTrue(any(
+            "optional feeder telemetry callback failed" in message
+            for message in self.ad.logs
+        ))
+
     def test_sparse_food_push_preserves_absent_boolean_fields(self):
         food_states = []
         backend = backend_module.Backend()
@@ -759,6 +852,65 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         self.client.logger.level = "trace"
         self.client._mqtt_recv_event_cb('', {'payload': json.dumps(request)}, {})
         self.assertIn('ignored device log report', self.ad.logs[-1])
+
+    def test_mqtt_handler_failure_is_contained_without_logging_camera_auth(self):
+        sensitive_value = "sensitive-camera-auth-value"
+        self.client.logger.level = "trace"
+        self.client.attr_push_event_listen(
+            lambda _message: (_ for _ in ()).throw(RuntimeError("synthetic"))
+        )
+        payload = {
+            "cmd": "ATTR_PUSH_EVENT",
+            "msgId": "contained-failure",
+            "ts": p.Timestamp.now().to_timestamp_epoch_ms(),
+            "soundSwitch": True,
+            "enableSound": True,
+            "cameraAuthInfo": sensitive_value,
+        }
+
+        self.client._mqtt_recv_event_cb(
+            "MQTT_MESSAGE",
+            {
+                "topic": "dl/PLAF203/SERIAL/device/event/post",
+                "payload": json.dumps(payload),
+            },
+            {},
+        )
+
+        rendered = "\n".join(self.ad.logs)
+        self.assertNotIn(sensitive_value, rendered)
+        self.assertIn("MQTT command handler failed", rendered)
+        self.assertIn("cmd=ATTR_PUSH_EVENT", rendered)
+        self.assertIn("msg_id=contained-failure", rendered)
+        self.assertIn("exception_type=RuntimeError", rendered)
+
+    def test_mqtt_parser_failure_is_contained_without_logging_camera_auth(self):
+        sensitive_value = "sensitive-camera-auth-value"
+        self.client.logger.level = "trace"
+        self.client.attr_push_event_listen(lambda _message: None)
+        payload = {
+            "cmd": "ATTR_PUSH_EVENT",
+            "msgId": "invalid-payload",
+            "ts": p.Timestamp.now().to_timestamp_epoch_ms(),
+            "nightVision": "NOT_A_MODE",
+            "cameraAuthInfo": sensitive_value,
+        }
+
+        self.client._mqtt_recv_event_cb(
+            "MQTT_MESSAGE",
+            {
+                "topic": "dl/PLAF203/SERIAL/device/event/post",
+                "payload": json.dumps(payload),
+            },
+            {},
+        )
+
+        rendered = "\n".join(self.ad.logs)
+        self.assertNotIn(sensitive_value, rendered)
+        self.assertIn("invalid MQTT command payload ignored", rendered)
+        self.assertIn("cmd=ATTR_PUSH_EVENT", rendered)
+        self.assertIn("msg_id=invalid-payload", rendered)
+        self.assertIn("exception_type=KeyError", rendered)
 
     def test_hour_minute_wire_parser_handles_late_hour(self):
         self.assertEqual(23, p.HourMinTimestamp.from_mqtt_payload_value('23:00').time.hour)

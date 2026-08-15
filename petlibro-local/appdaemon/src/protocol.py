@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import datetime
 import enum
 import hashlib
 import os
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 class Commands:
@@ -707,9 +707,12 @@ class AttrPushEventIn:
     electric_quantity: Optional[PercentageInt] = None
 
     # Feeder state
-    surplus_grain: bool = None
-    motor_state: int = None
-    grain_outlet_state: bool = None
+    surplus_grain: Optional[bool] = None
+    motor_state: Optional[int] = None
+    grain_outlet_state: Optional[bool] = None
+
+    # Network telemetry is optional in sparse push events.
+    wifi_ssid: Optional[str] = None
 
     # Audio playback
     enable_audio: Optional[bool] = None
@@ -792,6 +795,24 @@ class AttrPushEventIn:
     sound_detection_start_time_utc: Optional[HourMinTimestamp] = None
     sound_detection_end_time_utc: Optional[HourMinTimestamp] = None
 
+    # Preserve the sparse wire payload for forward-compatible field handling.
+    # Keep it out of repr/error formatting because it can contain credentials.
+    raw_fields: Mapping[str, object] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
+
+    def has(self, raw_field: str) -> bool:
+        """Return whether the original wire payload contained a field."""
+
+        return raw_field in self.raw_fields
+
+    def get(self, raw_field: str, default=None):
+        """Read a raw wire field without assuming it exists."""
+
+        return self.raw_fields.get(raw_field, default)
+
     @staticmethod
     def from_mqtt_payload(payload: dict) -> AttrPushEventIn:
         # at least a very sparse payload. a full payload is sent once
@@ -801,6 +822,7 @@ class AttrPushEventIn:
         data = {
             'message_id': MessageId(payload['msgId']),
             'timestamp': Timestamp.from_timestamp_epoch_ms(int(payload['ts'])),
+            'raw_fields': dict(payload),
         }
 
         if 'powerMode' in payload:
@@ -816,6 +838,9 @@ class AttrPushEventIn:
             data = data | { 'motor_state': int(payload['motorState']) }
         if 'grainOutletState' in payload:
             data = data | { 'grain_outlet_state': payload['grainOutletState'] }
+
+        if 'wifiSsid' in payload:
+            data = data | { 'wifi_ssid': str(payload['wifiSsid']) }
 
         if 'enableAudio' in payload:
             data = data | { 'enable_audio': payload['enableAudio'] }

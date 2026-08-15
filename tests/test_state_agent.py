@@ -7,6 +7,7 @@ from state_agent import (
     FeederTruth,
     StateAgentBadResponse,
     StateAgentClient,
+    diff_settings_raw,
 )
 
 
@@ -24,8 +25,8 @@ class FakeResponse:
         return self.body
 
 
-def core_payload(*, enabled_raw=1, bowl_or_target_raw=2):
-    return {
+def core_payload(*, enabled_raw=1, bowl_or_target_raw=2, settings_raw=None):
+    payload = {
         "ok": True,
         "read_ms": 1,
         "revisions": {
@@ -69,16 +70,37 @@ def core_payload(*, enabled_raw=1, bowl_or_target_raw=2):
         },
         "queue": {"head": 23, "tail": 23, "pending": False},
     }
+    if settings_raw is not None:
+        payload["settings_raw"] = settings_raw
+    return payload
 
 
 def test_core_parser_builds_explicit_truth_models():
-    truth = FeederTruth.from_dict(core_payload())
+    truth = FeederTruth.from_dict(
+        core_payload(settings_raw={"attr_state_0x0012": 0})
+    )
 
     assert truth.settings["volume"] == 76
     assert truth.revisions.core_rev == "fnv64:core"
     assert truth.plans.count == 1
     assert truth.plans.by_id(1).enabled_raw == 1
     assert truth.plans.by_id(1).bowl_or_target_raw == 2
+    assert truth.settings_raw == {"attr_state_0x0012": 0}
+
+
+def test_raw_settings_diff_identifies_changed_file_fields_without_semantic_guessing():
+    before = {
+        "attr_state_0x0012": 0,
+        "attr_state_0x0013": 7,
+    }
+    after = {
+        "attr_state_0x0012": 1,
+        "attr_state_0x0013": 7,
+    }
+
+    assert diff_settings_raw(before, after) == {
+        "attr_state_0x0012": (0, 1)
+    }
 
 
 def test_core_parser_rejects_count_mismatch_and_duplicate_days():
@@ -114,6 +136,7 @@ def test_client_sends_bearer_auth_and_parses_all_read_only_endpoints():
             }
         ),
         FakeResponse(core_payload()),
+        FakeResponse(core_payload(settings_raw={"attr_state_0x0012": 1})),
         FakeResponse(
             {
                 "ok": True,
@@ -131,12 +154,16 @@ def test_client_sends_bearer_auth_and_parses_all_read_only_endpoints():
         assert client.health()["ok"] is True
         assert client.revisions().revisions.core_rev == "fnv64:core"
         assert client.core().plans.by_id(1).portions == 10
+        assert client.core(raw=True).settings_raw == {
+            "attr_state_0x0012": 1
+        }
         assert client.feed_events().events == ()
 
     assert [call.args[0].full_url for call in urlopen.call_args_list] == [
         "http://192.0.2.1:8765/health",
         "http://192.0.2.1:8765/v1/rev",
         "http://192.0.2.1:8765/v1/core",
+        "http://192.0.2.1:8765/v1/core?raw=1",
         "http://192.0.2.1:8765/v1/feed-events",
     ]
     assert all(

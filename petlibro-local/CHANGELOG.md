@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.9
+
+- Acknowledge sparse `ATTR_PUSH_EVENT` messages before processing optional
+  telemetry, tolerate missing and unknown fields, and isolate telemetry callback
+  failures so they cannot break the feeder protocol exchange.
+- Treat persistent fields in attribute pushes only as state-agent refresh hints;
+  feeder-local `/v1/core` truth remains authoritative.
+- Contain MQTT parser and handler failures with sanitized context so sensitive
+  fields such as `cameraAuthInfo` cannot leak through AppDaemon exception
+  formatting.
+- Add opt-in raw state-agent reads and raw-settings comparison support for
+  capture-backed investigation of unresolved persisted-field mappings.
+
 ## 0.2.8
 
 - Make the authenticated feeder-side state API authoritative for persistent

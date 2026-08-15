@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import socket
 from typing import Any, Mapping
@@ -240,6 +240,7 @@ class FeederTruth:
     settings: FeederSettings
     plans: FeederPlans
     queue: FeederQueue
+    settings_raw: Mapping[str, object] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: object) -> "FeederTruth":
@@ -250,6 +251,9 @@ class FeederTruth:
             settings=FeederSettings.from_dict(obj.get("settings")),
             plans=FeederPlans.from_dict(obj.get("plans")),
             queue=FeederQueue.from_dict(obj.get("queue")),
+            settings_raw=dict(
+                _optional_object(obj.get("settings_raw"), "settings_raw")
+            ),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -260,6 +264,7 @@ class FeederTruth:
             "settings": self.settings.to_dict(),
             "plans": self.plans.to_dict(),
             "queue": self.queue.to_dict(),
+            "settings_raw": dict(self.settings_raw),
         }
 
 
@@ -323,8 +328,9 @@ class StateAgentClient:
     def revisions(self) -> RevisionSnapshot:
         return RevisionSnapshot.from_dict(self._get("/v1/rev"))
 
-    def core(self) -> FeederTruth:
-        return FeederTruth.from_dict(self._get("/v1/core"))
+    def core(self, *, raw: bool = False) -> FeederTruth:
+        path = "/v1/core?raw=1" if raw else "/v1/core"
+        return FeederTruth.from_dict(self._get(path))
 
     def feed_events(self) -> FeedEventSnapshot:
         return FeedEventSnapshot.from_dict(self._get("/v1/feed-events"))
@@ -363,7 +369,7 @@ class StateAgentClient:
 class UnavailableStateAgentClient:
     """Used while discovery has not resolved a feeder address yet."""
 
-    def _unavailable(self):
+    def _unavailable(self, *_args, **_kwargs):
         raise StateAgentUnavailable("state-agent URL is not configured")
 
     health = _unavailable
@@ -383,6 +389,24 @@ def _object(data: object, name: str) -> Mapping[str, Any]:
     if not isinstance(data, dict):
         raise StateAgentBadResponse(f"{name} must be an object")
     return data
+
+
+def _optional_object(data: object, name: str) -> Mapping[str, Any]:
+    if data is None:
+        return {}
+    return _object(data, name)
+
+
+def diff_settings_raw(
+    before: Mapping[str, object], after: Mapping[str, object]
+) -> dict[str, tuple[object | None, object | None]]:
+    """Return changed raw setting fields without assigning semantics to them."""
+
+    return {
+        key: (before.get(key), after.get(key))
+        for key in sorted(set(before) | set(after))
+        if key not in before or key not in after or before[key] != after[key]
+    }
 
 
 def _nonempty_string(data: object, name: str) -> str:

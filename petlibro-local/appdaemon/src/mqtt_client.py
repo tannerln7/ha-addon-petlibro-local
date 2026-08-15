@@ -144,8 +144,9 @@ class Client:
         except (KeyError, TypeError, json.JSONDecodeError) as error:
             self.logger.warning(
                 "invalid MQTT message ignored",
+                topic=data.get("topic"),
                 channel=channel,
-                error_type=type(error).__name__,
+                exception_type=type(error).__name__,
             )
             return
 
@@ -163,14 +164,29 @@ class Client:
                 command=command,
             )
             return
+        context = {
+            "topic": data.get("topic"),
+            "cmd": command,
+            "msg_id": payload.get("msgId"),
+        }
         try:
-            callback(spec.parser(payload))
-        except (KeyError, TypeError, ValueError) as error:
+            message = spec.parser(payload)
+        except Exception as error:
             self.logger.warning(
                 "invalid MQTT command payload ignored",
-                channel=channel,
-                command=command,
-                error_type=type(error).__name__,
+                **context,
+                exception_type=type(error).__name__,
+            )
+            return
+        try:
+            callback(message)
+        except Exception as error:
+            # Never let AppDaemon format the original callback arguments: they
+            # can contain cameraAuthInfo and other sensitive device material.
+            self.logger.error(
+                "MQTT command handler failed",
+                **context,
+                exception_type=type(error).__name__,
             )
 
     def _send(self, channel: str, message) -> None:

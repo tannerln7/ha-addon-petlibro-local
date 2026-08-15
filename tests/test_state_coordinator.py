@@ -411,6 +411,24 @@ def test_heartbeat_uses_revision_only_when_core_is_unchanged():
     assert len(mirrored) == 1
 
 
+def test_persistent_push_hint_checks_agent_revisions_without_applying_event_values():
+    initial = truth()
+    agent = FakeAgent([initial])
+    agent.revision_value = RevisionSnapshot(
+        read_ms=0,
+        revisions=initial.revisions,
+        queue=initial.queue,
+    )
+    coordinator, _ad, agent, _logger, mirrored, _availability = ready_coordinator(agent)
+
+    coordinator.on_persistent_state_hint()
+
+    assert agent.revision_calls == 1
+    assert agent.core_calls == 1
+    assert coordinator.latest_truth() is initial
+    assert mirrored == [initial]
+
+
 def test_heartbeat_changed_revision_fetches_and_applies_core():
     initial = truth()
     changed = replace(

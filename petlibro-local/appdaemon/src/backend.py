@@ -602,74 +602,99 @@ class Backend:
         self._notify_persistent_state_hint()
 
     def _attr_push_event_cb(self, message: AttrPushEventIn):
-        self._publish_attr_telemetry(message)
+        # The event acknowledgement is protocol-critical. Sparse telemetry and
+        # state hints are best-effort and must never delay or prevent it.
         self.client.attr_push_event_send(AttrPushEventOut.create(
             message_id=message.message_id,
             code=Code.OK,
         ))
-        self._device_timestamp_sync_drift_check_and_adjust(message.timestamp)
         self._notify_persistent_state_hint()
+        self._publish_attr_telemetry(message)
+        self._device_timestamp_sync_drift_check_and_adjust(message.timestamp)
 
     def _publish_attr_telemetry(
         self, message: AttrGetServiceIn | AttrPushEventIn
     ) -> None:
+        field_value = lambda name: getattr(message, name, None)
         capabilities = {
-            "camera/feature_enabled": message.enable_camera,
-            "recording/feature_enabled": message.enable_video_record,
-            "motion_detection/feature_enabled": message.enable_motion_detection,
-            "sound_detection/feature_enabled": message.enable_sound_detection,
-            "sound/feature_enabled": message.enable_sound,
-            "button_lights/feature_enabled": message.enable_light,
+            "camera/feature_enabled": field_value("enable_camera"),
+            "recording/feature_enabled": field_value("enable_video_record"),
+            "motion_detection/feature_enabled": field_value("enable_motion_detection"),
+            "sound_detection/feature_enabled": field_value("enable_sound_detection"),
+            "sound/feature_enabled": field_value("enable_sound"),
+            "button_lights/feature_enabled": field_value("enable_light"),
         }
         if self.capabilities_callback is not None and any(
             value is not None for value in capabilities.values()
         ):
-            self.capabilities_callback(capabilities)
-
-        if self.state_power_callback is not None and any(value is not None for value in (
-            message.electric_quantity,
-            message.power_mode,
-            message.power_type,
-        )):
-            self.state_power_callback(
-                battery_level=message.electric_quantity,
-                mode=message.power_mode,
-                type_=message.power_type,
+            self._emit_optional_telemetry(
+                "capabilities", self.capabilities_callback, capabilities
             )
 
-        if self.state_food_callback is not None and any(value is not None for value in (
-            message.motor_state,
-            message.grain_outlet_state,
-            message.surplus_grain,
+        if self.state_power_callback is not None and any(item is not None for item in (
+            field_value("electric_quantity"),
+            field_value("power_mode"),
+            field_value("power_type"),
         )):
-            self.state_food_callback(
-                motor_state=message.motor_state,
+            self._emit_optional_telemetry(
+                "power",
+                self.state_power_callback,
+                battery_level=field_value("electric_quantity"),
+                mode=field_value("power_mode"),
+                type_=field_value("power_type"),
+            )
+
+        if self.state_food_callback is not None and any(item is not None for item in (
+            field_value("motor_state"),
+            field_value("grain_outlet_state"),
+            field_value("surplus_grain"),
+        )):
+            grain_outlet_state = field_value("grain_outlet_state")
+            surplus_grain = field_value("surplus_grain")
+            self._emit_optional_telemetry(
+                "food",
+                self.state_food_callback,
+                motor_state=field_value("motor_state"),
                 outlet_blocked=(
-                    None if message.grain_outlet_state is None
-                    else not message.grain_outlet_state
+                    None if grain_outlet_state is None
+                    else not grain_outlet_state
                 ),
                 low_fill_level=(
-                    None if message.surplus_grain is None
-                    else not message.surplus_grain
+                    None if surplus_grain is None else not surplus_grain
                 ),
             )
 
-        if self.device_wifi_info_callback is not None and message.wifi_ssid is not None:
-            self.device_wifi_info_callback(ssid=message.wifi_ssid)
+        wifi_ssid = field_value("wifi_ssid")
+        if self.device_wifi_info_callback is not None and wifi_ssid is not None:
+            self._emit_optional_telemetry(
+                "wifi", self.device_wifi_info_callback, ssid=wifi_ssid
+            )
 
         if self.device_sd_card_info_callback is not None and any(
-            value is not None for value in (
-                message.sd_card_state,
-                message.sd_card_file_system,
-                message.sd_card_total_capacity,
-                message.sd_card_used_capacity,
+            item is not None for item in (
+                field_value("sd_card_state"),
+                field_value("sd_card_file_system"),
+                field_value("sd_card_total_capacity"),
+                field_value("sd_card_used_capacity"),
             )
         ):
-            self.device_sd_card_info_callback(
-                state=message.sd_card_state,
-                file_system=message.sd_card_file_system,
-                total_capacity_mb=message.sd_card_total_capacity,
-                used_capacity_mb=message.sd_card_used_capacity,
+            self._emit_optional_telemetry(
+                "sd_card",
+                self.device_sd_card_info_callback,
+                state=field_value("sd_card_state"),
+                file_system=field_value("sd_card_file_system"),
+                total_capacity_mb=field_value("sd_card_total_capacity"),
+                used_capacity_mb=field_value("sd_card_used_capacity"),
+            )
+
+    def _emit_optional_telemetry(self, kind: str, callback, *args, **kwargs) -> None:
+        try:
+            callback(*args, **kwargs)
+        except Exception as error:
+            self.logger.warning(
+                "optional feeder telemetry callback failed",
+                telemetry=kind,
+                error_type=type(error).__name__,
             )
 
     def _notify_persistent_state_hint(self) -> None:
