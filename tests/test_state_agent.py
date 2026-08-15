@@ -37,12 +37,20 @@ def core_payload(*, enable_audio_raw=1, audio_times=2, settings_raw=None):
             "queue_index_rev": "fnv64:queue",
         },
         "settings": {
+            "audio_url": "https://example.invalid/meal-call.aac",
+            "feeding_audio_enabled": "enabled",
             "volume": 76,
             "camera_resolution": "1080p",
             "sound_switch": "enabled",
         },
         "setting_classes": {
-            "persistent": ["volume", "camera_resolution", "sound_switch"],
+            "persistent": [
+                "audio_url",
+                "feeding_audio_enabled",
+                "volume",
+                "camera_resolution",
+                "sound_switch",
+            ],
             "effective_cached": [],
             "runtime": [],
         },

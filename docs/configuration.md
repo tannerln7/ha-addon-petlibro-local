@@ -125,15 +125,21 @@ a fresh core read. If it fails, the controller sends the protocol error form
 with no plans instead of fabricating a schedule.
 
 The state API exposes `audio_url`, but audio URL writes remain blocked because
-tested firmware can restart when given an unreachable URL. The former
-"automatic button lock" controls keep their MQTT entity IDs for compatibility,
-but now mirror the binary-backed `auto_change_mode` and `auto_threshold`
-configuration fields without claiming an unproven lock meaning. Manual feeding
-is an action and continues to use its MQTT acknowledgement/event path instead
-of expecting a persistent `/v1/core` change. Explicit feeder MQTT endpoint
-persistence remains a separately gated recovery operation and is reported as
-acknowledged-but-not-locally-verifiable because `/v1/core` does not expose
-endpoint configuration.
+tested firmware can restart when given an unreachable URL. The Meal Call text
+entity mirrors that feeder-owned URL instead of retaining a Home Assistant
+value. Enabling Meal Call performs a fresh core read and sends the persistent
+`audio_url` together with `enableAudio`, because firmware does not enable audio
+when the URL is omitted. The existing text entity displays that value, but the
+backend continues to reject URL edits.
+
+The former "automatic button lock" controls keep their MQTT entity IDs for
+compatibility, but now mirror the binary-backed `auto_change_mode` and
+`auto_threshold` configuration fields without claiming an unproven lock
+meaning. Manual feeding is an action and continues to use its MQTT
+acknowledgement/event path instead of expecting a persistent `/v1/core` change.
+Explicit feeder MQTT endpoint persistence remains a separately gated recovery
+operation and is reported as acknowledged-but-not-locally-verifiable because
+`/v1/core` does not expose endpoint configuration.
 
 ## Device discovery and overrides
 

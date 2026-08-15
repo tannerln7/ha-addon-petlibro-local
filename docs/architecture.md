@@ -67,6 +67,9 @@ The feeder agent classifies decoded `state.bin` fields as persistent
 configuration, effective cached state, or runtime telemetry. Persistent switch
 bytes are authoritative for command verification. Adjacent firmware-calculated
 `enableX` cache bytes remain diagnostic only even when they happen to agree.
+Meal Call enablement additionally carries the fresh persistent `audio_url`
+from that same feeder truth response because firmware requires both fields in
+one attribute command; retained Home Assistant text is never used.
 
 ```mermaid
 stateDiagram-v2

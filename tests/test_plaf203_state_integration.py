@@ -37,8 +37,12 @@ class Logger:
 
 class CapturingClient:
     def __init__(self):
+        self.attribute_messages = []
         self.plan_messages = []
         self.plan_responses = []
+
+    def attr_set_service_send(self, message):
+        self.attribute_messages.append(message.to_mqtt_payload())
 
     def feeding_plan_service_send(self, message):
         self.plan_messages.append(message.to_mqtt_payload())
@@ -162,6 +166,33 @@ def test_sound_setting_enables_raw_preflight_diagnostics_only_when_configured():
     assert request.raw_settings_diagnostics
 
 
+def test_meal_call_enable_uses_fresh_persistent_audio_url():
+    router = object.__new__(command_module.CommandRouter)
+    router.coordinator = CapturingCoordinator()
+    router.logger = Logger()
+    router.backend = backend_module.Backend()
+    router.backend.client = CapturingClient()
+    router.raw_settings_diagnostics = False
+    audio_spec = next(
+        spec for spec in SETTING_COMMANDS if spec.control == "audio.enable"
+    )
+
+    router._setting_handler(audio_spec)(
+        "MQTT_MESSAGE",
+        {"payload": "true", "retain": False},
+        {},
+    )
+
+    request = router.coordinator.requests[0]
+    assert request.requires_fresh_preflight
+    request.publisher(FeederTruth.from_dict(core_payload()))
+    assert len(router.backend.client.attribute_messages) == 1
+    payload = router.backend.client.attribute_messages[0]
+    assert payload["cmd"] == "ATTR_SET_SERVICE"
+    assert payload["enableAudio"] is True
+    assert payload["audioUrl"] == "https://example.invalid/meal-call.aac"
+
+
 def test_retained_plan_command_is_not_treated_as_user_intent():
     router = object.__new__(command_module.CommandRouter)
     router.logger = Logger()
@@ -254,6 +285,10 @@ def test_feeder_truth_projection_updates_ha_mirror_without_commands():
     state.apply_feeder_truth(FeederTruth.from_dict(core_payload()))
 
     published = {topic: payload for topic, payload, _kwargs in mqtt.published}
+    assert (
+        published["plaf203/SERIAL/audio/file_url"]
+        == "https://example.invalid/meal-call.aac"
+    )
     assert published["plaf203/SERIAL/sound/volume"] == 76
     assert published["plaf203/SERIAL/camera/resolution"] == "P1080"
     assert json.loads(published["plaf203/SERIAL/food/plan_1"])["grain_num"] == 10

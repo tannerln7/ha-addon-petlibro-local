@@ -33,6 +33,8 @@ class SettingCommandSpec:
     parser: Callable[[object], object]
     expected: Callable[[object], object]
     publisher: Callable[[object, object], object]
+    publisher_with_truth: Callable[[object, object, object], object] | None = None
+    requires_fresh_preflight: bool = False
 
 
 def enabled_to_bool(value: object) -> bool:
@@ -114,7 +116,23 @@ def identity(value):
     return value
 
 
+def publish_feeding_audio_enable(backend, value: bool, truth):
+    """Send the feeder-owned audio URL required by firmware when enabling."""
+
+    if not value:
+        return backend.settings_audio(enable=False)
+    audio_url = truth.settings.get("audio_url")
+    if (
+        not truth.settings.is_persistent("audio_url")
+        or not isinstance(audio_url, str)
+        or not audio_url.strip()
+    ):
+        raise ValueError("persistent feeder audio URL is unavailable")
+    return backend.settings_audio(enable=True, file_url=audio_url)
+
+
 TRUTH_PROJECTIONS = (
+    TruthProjection("audio_url", "audio/file_url", str),
     TruthProjection("feeding_audio_enabled", "audio/enable", enabled_to_bool),
     TruthProjection("camera_switch", "camera/enable", enabled_to_bool),
     TruthProjection("camera_mode", "camera/aging_type", aging_to_wire),
@@ -159,7 +177,16 @@ def parse_mqtt_bool(value: object) -> bool:
 
 
 SETTING_COMMANDS = (
-    SettingCommandSpec("audio/cmd/enable", "audio.enable", "feeding_audio_enabled", parse_mqtt_bool, bool_to_enabled, lambda backend, value: backend.settings_audio(enable=value)),
+    SettingCommandSpec(
+        "audio/cmd/enable",
+        "audio.enable",
+        "feeding_audio_enabled",
+        parse_mqtt_bool,
+        bool_to_enabled,
+        lambda backend, value: backend.settings_audio(enable=value),
+        publisher_with_truth=publish_feeding_audio_enable,
+        requires_fresh_preflight=True,
+    ),
     SettingCommandSpec("camera/cmd/enable", "camera.enable", "camera_switch", parse_mqtt_bool, bool_to_enabled, lambda backend, value: backend.settings_camera(enable=value)),
     SettingCommandSpec("camera/cmd/aging_type", "camera.mode", "camera_mode", enum_value(AgingType), aging_to_semantic, lambda backend, value: backend.settings_camera(aging_type=value)),
     SettingCommandSpec("camera/cmd/night_vision", "camera.night_vision", "night_vision_mode", enum_value(NightVision), night_vision_to_semantic, lambda backend, value: backend.settings_camera(night_vision=value)),

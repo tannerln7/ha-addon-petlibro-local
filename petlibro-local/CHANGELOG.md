@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+- Send the fresh feeder-owned `audio_url` together with `enableAudio` when
+  enabling Meal Call, matching the firmware's grouped attribute requirement.
+- Mirror the State Agent's persistent Meal Call audio URL into Home Assistant
+  while continuing to reject unsafe URL edits.
+
 ## 0.3.0
 
 - Add the maintained feeder-resident State Agent source and replace the

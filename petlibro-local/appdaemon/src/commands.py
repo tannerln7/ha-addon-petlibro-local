@@ -134,10 +134,16 @@ class CommandRouter:
                 PersistentWriteRequest(
                     control=spec.control,
                     target=expected,
-                    publisher=lambda _truth: spec.publisher(self.backend, target),
+                    publisher=lambda truth: (
+                        spec.publisher_with_truth(self.backend, target, truth)
+                        if spec.publisher_with_truth is not None
+                        else spec.publisher(self.backend, target)
+                    ),
                     predicate=SettingEqualsPredicate(spec.state_field, expected),
                     command_summary=spec.control,
-                    requires_fresh_preflight=raw_settings_diagnostics,
+                    requires_fresh_preflight=(
+                        raw_settings_diagnostics or spec.requires_fresh_preflight
+                    ),
                     raw_settings_diagnostics=raw_settings_diagnostics,
                 )
             )
