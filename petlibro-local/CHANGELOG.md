@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.2
+
+- Reconstruct Home Assistant dispensing status after AppDaemon startup, feeder
+  reconnect, and Home Assistant birth from a correlated live
+  `ATTR_GET_SERVICE.motorState` response.
+- Keep grain-output events authoritative for immediate runtime transitions and
+  reject solicited responses that belong to an old connection, another
+  request, or an earlier local event generation.
+- Add dedicated non-retained dispensing availability and a distinct Recovering
+  state while retaining durable last-dispense observations.
+
 ## 0.3.1
 
 - Send the fresh feeder-owned `audio_url` together with `enableAudio` when

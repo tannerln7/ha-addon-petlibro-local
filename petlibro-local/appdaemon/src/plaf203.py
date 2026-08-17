@@ -11,6 +11,7 @@ import appdaemon.plugins.mqtt.mqttapi as mqttapi
 from backend import Backend
 from camera_metadata import CameraMetadataPublisher
 from commands import CommandRouter
+from dispensing_status import DispensingStatusProjector, FoodOutputProgress
 from feeder_mqtt_validation import validate_feeder_mqtt_destination
 from ha_entities import HomeAssistantDiscoveryMqtt, HomeAssistantStatePublisher
 from petlibro_logging import PetlibroLogger
@@ -44,6 +45,9 @@ class Plaf203(adbase.ADBase):
         self.state = HomeAssistantStatePublisher(
             self.mqtt, self.serial_number, self.logger
         )
+        self.dispensing_status = DispensingStatusProjector(self.state, self.logger)
+        self.dispensing_status.initialize()
+        self._overall_available = False
         self.storage = Storage(self.ad, "plaf203", self.serial_number)
         self.storage.initialize()
 
@@ -85,6 +89,12 @@ class Plaf203(adbase.ADBase):
             self.mqtt, self.serial_number
         )
         self.discovery.discovery_issue()
+        self.mqtt.listen_event(
+            self._home_assistant_status_cb,
+            "MQTT_MESSAGE",
+            topic="homeassistant/status",
+            namespace="mqtt",
+        )
         configured_uid = str(self.args.get("device_uid", "")).strip()
         if len(configured_uid) == 20 and configured_uid.isalnum():
             self.state.publish("device/uuid", configured_uid)
@@ -136,6 +146,7 @@ class Plaf203(adbase.ADBase):
         self.camera_metadata.stop()
         self.coordinator.shutdown()
         self.storage.terminate()
+        self.dispensing_status.on_feeder_disconnected()
         self.state.publish("device/online", False)
 
     def _configure_feeder_mqtt_persistence(self) -> None:
@@ -183,11 +194,18 @@ class Plaf203(adbase.ADBase):
         self.backend.device_config_ack_listen(self.coordinator.on_mqtt_ack)
         self.backend.feeding_plan_request_listen(self._feeding_plan_requested)
         self.backend.device_started_listen(self._device_started)
+        self.backend.food_output_progress_listen(self._food_output_progress)
+        self.backend.runtime_snapshot_listen(
+            self.dispensing_status.runtime_snapshot_started,
+            self.dispensing_status.apply_runtime_snapshot,
+            self.dispensing_status.runtime_event_generation_get,
+        )
 
     def _apply_feeder_truth(self, truth: FeederTruth) -> None:
         self.state.apply_feeder_truth(truth)
 
     def _coordinator_availability_set(self, available: bool) -> None:
+        self._overall_available = available
         self.state.publish("device/online", available)
         if not available:
             return
@@ -236,11 +254,37 @@ class Plaf203(adbase.ADBase):
 
     def _went_online(self) -> None:
         self.logger.info("device online", serial=self.serial_number)
+        self.dispensing_status.on_feeder_connected(
+            self.backend.connection_generation
+        )
         self.coordinator.on_feeder_connected()
 
     def _went_offline(self) -> None:
         self.logger.info("device offline", serial=self.serial_number)
+        self.dispensing_status.on_feeder_disconnected()
         self.coordinator.on_feeder_disconnected("feeder MQTT heartbeat lost")
+
+    def _food_output_progress(self, progress: FoodOutputProgress) -> None:
+        self.dispensing_status.apply_grain_event(
+            progress,
+            self.backend.connection_generation,
+        )
+
+    def _home_assistant_status_cb(self, _eventname, data, _kwargs) -> None:
+        payload = data.get("payload") if isinstance(data, dict) else None
+        if isinstance(payload, bytes):
+            payload = payload.decode("utf-8", errors="replace")
+        if not isinstance(payload, str) or payload.strip().lower() != "online":
+            return
+
+        self.logger.info("Home Assistant online; restoring MQTT projections")
+        self.discovery.discovery_issue()
+        self.state.publish("device/online", self._overall_available)
+        latest_truth = self.coordinator.latest_truth()
+        if latest_truth is not None:
+            self._apply_feeder_truth(latest_truth)
+        self.dispensing_status.mark_unavailable()
+        self.backend.request_runtime_snapshot("Home Assistant birth")
 
     def _ntp_sync_status(self, successful: bool) -> None:
         if successful:

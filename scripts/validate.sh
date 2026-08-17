@@ -13,6 +13,7 @@ cd "${repo_root}"
     petlibro-local/appdaemon/src/camera_metadata.py \
     petlibro-local/appdaemon/src/commands.py \
     petlibro-local/appdaemon/src/device_discovery.py \
+    petlibro-local/appdaemon/src/dispensing_status.py \
     petlibro-local/appdaemon/src/feed_plans.py \
     petlibro-local/appdaemon/src/feeder_mqtt_validation.py \
     petlibro-local/appdaemon/src/ha_entities.py \

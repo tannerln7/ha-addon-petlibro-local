@@ -8,7 +8,7 @@ import enum
 
 import appdaemon.plugins.mqtt.mqttapi as mqttapi
 
-from backend import FoodOutputProgress
+from dispensing_status import DispensingStatusProjector, FoodOutputProgress
 from feed_plans import plan_state_payload
 from protocol import (
     AgingType,
@@ -165,7 +165,8 @@ class HomeAssistantDiscoveryMqtt:
             FoodOutputProgress.RUNNING.name: 'Dispensing',
             FoodOutputProgress.BLOCKED.name: 'Blocked',
             FoodOutputProgress.ERROR.name: 'Error',
-        })
+            FoodOutputProgress.RECOVERING.name: 'Recovering',
+        }, availability_topic=DispensingStatusProjector.AVAILABILITY_TOPIC)
         self._ha_sensor_timestamp_config_publish('Last dispense started', 'mdi:food', 'food_output', 'last_start')
         self._ha_sensor_timestamp_config_publish('Last dispense completed', 'mdi:food', 'food_output', 'last_end')
         self._ha_sensor_config_publish('Last dispense portions', 'mdi:food', 'food_output', 'last_grain_count')
@@ -319,6 +320,7 @@ class HomeAssistantDiscoveryMqtt:
         unit_of_measurement: str = None,
         entity_category: str = None,
         value_labels: dict = None,
+        availability_topic: str = None,
     ):
         payload = {
             'name': user_friendly_name,
@@ -336,7 +338,9 @@ class HomeAssistantDiscoveryMqtt:
         if value_labels is not None:
             payload['value_template'] = self._ha_value_template_get(value_labels)
 
-        merged_payload = payload | self._device_flags_get() | self._availability_flags_get()
+        merged_payload = payload | self._device_flags_get() | self._availability_flags_get(
+            availability_topic
+        )
 
         self._mqtt_publish(self._ha_config_topic_base_path_get('sensor', '{}_{}'.format(group, name)), merged_payload)
 
@@ -406,9 +410,11 @@ class HomeAssistantDiscoveryMqtt:
             'device': self._device_info_get(),
         }
 
-    def _availability_flags_get(self):
+    def _availability_flags_get(self, relative_topic: str = None):
         return {
-            'availability_topic': self._device_base_path_get('device/online'),
+            'availability_topic': self._device_base_path_get(
+                relative_topic or 'device/online'
+            ),
             'payload_available': 'true',
             'payload_not_available': 'false',
         }
@@ -484,6 +490,11 @@ class HomeAssistantStatePublisher:
             payload = value
         self.mqtt.mqtt_publish(
             self.topic(topic), payload, namespace="mqtt", retain=retain
+        )
+
+    def clear_retained(self, topic: str) -> None:
+        self.mqtt.mqtt_publish(
+            self.topic(topic), "", namespace="mqtt", retain=True
         )
 
     def topic(self, relative_topic: str) -> str:

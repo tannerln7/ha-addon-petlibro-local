@@ -671,6 +671,12 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
                 "/opt/petlibro-local/appdaemon/device_discovery.py",
             )
         ),
+        app_dir / "dispensing_status.py": Path(
+            os.environ.get(
+                "PETLIBRO_DISPENSING_STATUS_SOURCE",
+                "/opt/petlibro-local/appdaemon/dispensing_status.py",
+            )
+        ),
         app_dir / "petlibro_logging.py": Path(
             os.environ.get(
                 "PETLIBRO_LOGGING_SOURCE",

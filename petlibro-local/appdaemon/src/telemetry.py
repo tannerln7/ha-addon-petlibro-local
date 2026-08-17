@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime
 
-from backend import Backend, FoodOutputProgress
+from backend import Backend
 from ha_entities import HomeAssistantStatePublisher
 from protocol import (
     GrainOutputType,
@@ -33,7 +33,6 @@ class TelemetryPublisher:
         backend.state_food_listen(self.food)
         backend.food_output_log_start_listen(self.food_output_start)
         backend.food_output_log_end_listen(self.food_output_end)
-        backend.food_output_progress_listen(self.food_output_progress)
 
     def device_info(
         self,
@@ -115,7 +114,7 @@ class TelemetryPublisher:
             "food_output/last_start": datetime.datetime.now().astimezone(),
             "food_output/last_grain_count": grain_num,
             "food_output/last_trigger": grain_output_type,
-        })
+        }, retain=True)
 
     def food_output_end(
         self, grain_output_type: GrainOutputType, grain_num: int
@@ -124,12 +123,14 @@ class TelemetryPublisher:
             "food_output/last_end": datetime.datetime.now().astimezone(),
             "food_output/last_grain_count": grain_num,
             "food_output/last_trigger": grain_output_type,
-        })
+        }, retain=True)
 
-    def food_output_progress(self, progress: FoodOutputProgress) -> None:
-        self.state.publish("food_output/progress", progress)
-
-    def _publish_non_none(self, values: dict[str, object | None]) -> None:
+    def _publish_non_none(
+        self, values: dict[str, object | None], *, retain: bool = False
+    ) -> None:
         for topic, value in values.items():
             if value is not None:
-                self.state.publish(topic, value)
+                if retain:
+                    self.state.publish(topic, value, retain=True)
+                else:
+                    self.state.publish(topic, value)

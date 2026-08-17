@@ -9,6 +9,7 @@
 | `src/state_coordinator.py` | Sole persistent feeder-truth authority and write-verification state machine |
 | `src/mqtt_client.py` / `src/protocol.py` | MQTT transport and firmware wire models |
 | `src/backend.py` | Low-level protocol lifecycle, commands, acknowledgements, and telemetry callbacks |
+| `src/dispensing_status.py` | Fresh dispensing runtime state, request ordering, and entity availability |
 | `src/settings_map.py` / `src/commands.py` | Declarative value mappings and user-intent routing |
 | `src/feed_plans.py` | Plan parsing, opaque-field-preserving serialization, and HA projection |
 | `src/ha_entities.py` / `src/telemetry.py` | Discovery, verified truth mirroring, and operational telemetry |

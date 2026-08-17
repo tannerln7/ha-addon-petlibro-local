@@ -92,6 +92,37 @@ write verification. An MQTT acknowledgement never mutates local truth by
 itself. API loss marks persistent state unavailable and blocks writes instead
 of promoting retained Home Assistant state.
 
+Dispensing status has a separate runtime truth path. On the first feeder
+heartbeat, after a feeder reconnect, and when Home Assistant publishes
+`homeassistant/status = online`, the controller sends one correlated
+`ATTR_GET_SERVICE` request. A matching response maps live firmware
+`motorState` values to Idle (`2`), Dispensing (`1`), or Recovering (`3`). Values
+such as `0`, malformed responses, and timeouts leave only this entity
+unavailable. Subsequent `GRAIN_OUTPUT_EVENT` START, BLOCKING, and END messages
+drive the immediate Dispensing, Blocked, and Idle transitions.
+
+The controller records the feeder connection generation, request `msgId`, and
+local grain-event generation for each runtime request. A response from an old
+connection, a response for another request, or a response overtaken by a grain
+event cannot overwrite newer runtime evidence. `Recovering` is distinct from
+`Blocked`: the former is the firmware's active recovery state, while the latter
+is the immediate reported grain-output event.
+
+`food_output/progress` and its dedicated availability topic are intentionally
+non-retained and are replayed only after fresh feeder evidence. The historical
+last-dispense start, end, portion count, and trigger topics are retained because
+they are durable last-known observations. Home Assistant birth also republishes
+discovery, current controller availability, and the coordinator's latest
+verified feeder truth; none of those retained or cached HA values are consumed
+as feeder truth.
+
+The State Agent remains file-backed. Its `/v1/core.motor_state_raw` value is an
+opportunistically persisted runtime cache and is not used to reconstruct current
+dispensing state. Direct motor GPIO is also unsuitable: firmware can
+intentionally stop the motor for roughly 950 ms during an active dual-bowl
+transition, so a stopped pin sample does not prove that the feed state machine
+is idle.
+
 Feeding plans have no second cache in `Backend` or AppDaemon storage. Every
 edit starts with a fresh core preflight and is sent as a full collection. The
 target plan changes only in time, weekdays, portions, derived one-shot state,
@@ -117,6 +148,7 @@ The AppDaemon implementation follows the same boundaries in code:
 | `settings_map.py` / `commands.py` | Declarative HA/semantic/wire mappings and user command routing |
 | `feed_plans.py` | Plan parsing, typed protocol serialization, and display projection |
 | `ha_entities.py` / `telemetry.py` | MQTT discovery, verified-state mirroring, and operational telemetry |
+| `dispensing_status.py` | Fresh dispensing runtime state, ordering, and dedicated availability |
 | `storage.py` | Local manual-feed preference and stale diagnostics, never feeder truth |
 | `feeder-state-agent/` | Strict binary decoder and feeder-resident read-only API |
 

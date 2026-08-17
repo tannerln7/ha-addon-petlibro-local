@@ -48,3 +48,4 @@ capture/
 # Local editor and AI assistant configuration
 .github/copilot-instructions.md
 .vscode/*
+/docs/ghidra-map.md
