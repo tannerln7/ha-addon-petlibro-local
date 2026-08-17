@@ -83,7 +83,10 @@ def test_discovery_publishes_update_entity_and_check_button():
     assert payload["state_topic"].endswith("/state_agent/update")
     assert payload["command_topic"].endswith("/state_agent/cmd/install")
     assert payload["payload_install"] == "install"
-    assert payload["installed_version_template"] == "{{ value_json.installed_version }}"
+    assert "installed_version_template" not in payload
+    assert "latest_version_template" not in payload
+    assert "release_url_template" not in payload
+    assert "in_progress_template" not in payload
 
     check_topics = [
         item

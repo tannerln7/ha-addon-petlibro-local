@@ -246,13 +246,14 @@ class UpdateStateSnapshot:
     last_error: str = ""
 
     def to_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "installed_version": self.installed_version,
             "latest_version": self.latest_version,
-            "release_url": self.release_url,
             "in_progress": self.in_progress,
-            "last_error": self.last_error,
         }
+        if self.release_url:
+            payload["release_url"] = self.release_url
+        return payload
 
 
 @dataclass(frozen=True)

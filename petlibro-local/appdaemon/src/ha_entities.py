@@ -652,10 +652,6 @@ class HomeAssistantDiscoveryMqtt:
             "state_topic": self._device_base_path_get(f"{group}/{name}"),
             "command_topic": self._device_base_path_get(f"{group}/cmd/install"),
             "payload_install": "install",
-            "installed_version_template": "{{ value_json.installed_version }}",
-            "latest_version_template": "{{ value_json.latest_version }}",
-            "release_url_template": "{{ value_json.release_url }}",
-            "in_progress_template": "{{ value_json.in_progress }}",
         }
 
         if entity_category is not None:
