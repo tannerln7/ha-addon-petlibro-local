@@ -37,9 +37,27 @@ else
     printf 'Skipping AppDaemon controller tests: install petlibro-local/appdaemon/requirements-dev.txt\n'
 fi
 
-cc -Os -Wall -Wextra -std=c99 \
-    -o /tmp/plaf203-state-agent \
-    feeder-state-agent/plaf203_state_agent.c
+make -C feeder-state-agent clean all
+
+if command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1; then
+    make -C feeder-state-agent clean arm-release
+    for binary in \
+        feeder-state-agent/plaf203-state-agent \
+        feeder-state-agent/plaf203-update-fs; do
+        file "${binary}" | grep -Eq 'ELF 32-bit.*ARM.*statically linked'
+        readelf -h "${binary}" | grep -Eq 'Class:[[:space:]]+ELF32'
+        readelf -h "${binary}" | grep -Eq 'Machine:[[:space:]]+ARM'
+        readelf -h "${binary}" | grep -Eq 'Flags:.*hard-float ABI'
+        readelf -A "${binary}" | grep -Eq 'Tag_CPU_arch: v7'
+        readelf -A "${binary}" | grep -Eq 'Tag_ABI_VFP_args: VFP registers'
+        if readelf -l "${binary}" | grep -q 'INTERP'; then
+            printf '%s contains a dynamic interpreter\n' "${binary}" >&2
+            exit 1
+        fi
+    done
+else
+    printf 'Skipping ARM release validation: arm-linux-gnueabihf-gcc is unavailable\n'
+fi
 
 (
     cd petlibro-local/go2rtc
@@ -58,9 +76,19 @@ for script in scripts/*.sh petlibro-local/run.sh petlibro-local/rootfs/etc/servi
     bash -n "${script}"
 done
 
+for script in \
+    feeder-state-agent/app_start_snippet.sh \
+    feeder-state-agent/runit/*/run \
+    feeder-state-agent/runit/plaf203-update-supervisor/supervisor.sh; do
+    /bin/sh -n "${script}"
+done
+
 if command -v shellcheck >/dev/null 2>&1; then
     shellcheck \
         scripts/*.sh \
+        feeder-state-agent/app_start_snippet.sh \
+        feeder-state-agent/runit/*/run \
+        feeder-state-agent/runit/plaf203-update-supervisor/supervisor.sh \
         petlibro-local/run.sh \
         petlibro-local/rootfs/etc/services.d/*/run
 fi

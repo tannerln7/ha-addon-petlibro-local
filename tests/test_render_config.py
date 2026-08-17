@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 from appdaemon.models.config.app import AllAppConfig
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "petlibro-local" / "render_config.py"
 TEMPLATES = ROOT / "petlibro-local" / "templates"
@@ -21,13 +20,9 @@ SPEC.loader.exec_module(render_config)
 
 class RenderConfigTests(unittest.TestCase):
     def test_addon_manifest_uses_prebuilt_amd64_image(self):
-        manifest = (ROOT / "petlibro-local" / "config.yaml").read_text(
-            encoding="utf-8"
-        )
+        manifest = (ROOT / "petlibro-local" / "config.yaml").read_text(encoding="utf-8")
 
-        self.assertIn(
-            "image: ghcr.io/tannerln7/ha-addon-petlibro-local\n", manifest
-        )
+        self.assertIn("image: ghcr.io/tannerln7/ha-addon-petlibro-local\n", manifest)
         self.assertIn("arch:\n  - amd64\n", manifest)
 
     def test_generated_apps_do_not_override_appdaemon_log_level(self):
@@ -97,6 +92,7 @@ class RenderConfigTests(unittest.TestCase):
             "protocol.py": "PETLIBRO_PROTOCOL_SOURCE",
             "settings_map.py": "PETLIBRO_SETTINGS_MAP_SOURCE",
             "state_agent.py": "PETLIBRO_STATE_AGENT_SOURCE",
+            "state_agent_updates.py": "PETLIBRO_STATE_AGENT_UPDATES_SOURCE",
             "state_coordinator.py": "PETLIBRO_STATE_COORDINATOR_SOURCE",
             "storage.py": "PETLIBRO_STORAGE_SOURCE",
             "telemetry.py": "PETLIBRO_TELEMETRY_SOURCE",
@@ -140,6 +136,7 @@ class RenderConfigTests(unittest.TestCase):
                 "protocol.py",
                 "settings_map.py",
                 "state_agent.py",
+                "state_agent_updates.py",
                 "state_coordinator.py",
                 "storage.py",
                 "telemetry.py",
@@ -170,20 +167,24 @@ class RenderConfigTests(unittest.TestCase):
                 "status_file=%2Fdata%2Fpetlibro_camera_status_petlibro_feeder.json",
                 go2rtc,
             )
-            self.assertIn("dump_c2d_plain=%2Fdata%2Fpetlibro_c2d_petlibro_feeder.dat", go2rtc)
+            self.assertIn(
+                "dump_c2d_plain=%2Fdata%2Fpetlibro_c2d_petlibro_feeder.dat", go2rtc
+            )
             self.assertIn("petlibro_discovery:", apps)
             self.assertIn("plaf203_example123:", apps)
             self.assertIn('device_uid: "PLAF20300000000ABCD0"', apps)
             self.assertIn("persist_feeder_mqtt: false", apps)
             self.assertIn('feeder_mqtt_host: ""', apps)
+            self.assertIn('petlibro_state_agent_url: "http://192.0.2.100:8765"', apps)
             self.assertIn(
-                'petlibro_state_agent_url: "http://192.0.2.100:8765"', apps
+                "state_agent_updates:",
+                apps,
             )
+            self.assertIn("  enabled: false", apps)
             self.assertIn(
                 "petlibro_state_agent_token: !secret petlibro_state_agent_token",
                 apps,
             )
-            self.assertNotIn("top-secret-state-token", apps)
             self.assertNotIn("\n  mqtt_host:", apps)
             self.assertEqual(2, apps.count('petlibro_log_level: "info"'))
             self.assertNotIn("\n  log_level:", apps)
@@ -212,13 +213,10 @@ class RenderConfigTests(unittest.TestCase):
             self.render_all(options, data_dir)
 
             apps = (data_dir / "apps.yaml").read_text(encoding="utf-8")
-            secrets = (data_dir / "appdaemon-secrets.yaml").read_text(
-                encoding="utf-8"
-            )
+            secrets = (data_dir / "appdaemon-secrets.yaml").read_text(encoding="utf-8")
             registry = (data_dir / "devices.json").read_text(encoding="utf-8")
-            self.assertIn(
-                'petlibro_state_agent_url: "http://192.0.2.100:9876"', apps
-            )
+            self.assertIn('petlibro_state_agent_url: "http://192.0.2.100:9876"', apps)
+            self.assertIn("state_agent_updates:", apps)
             self.assertIn(
                 "petlibro_state_agent_token: !secret petlibro_state_agent_token",
                 apps,
@@ -226,6 +224,60 @@ class RenderConfigTests(unittest.TestCase):
             self.assertIn("top-secret-state-token", secrets)
             self.assertNotIn("top-secret-state-token", apps)
             self.assertNotIn("top-secret-state-token", registry)
+
+    def test_validates_and_renders_state_agent_updates(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            options = self.options(devices=[self.manual_device()])
+            options["state_agent_updates"] = {
+                "enabled": True,
+                "manifest_url": "https://downloads.example.invalid/plaf203/v1.2.3/latest.json",
+                "check_on_connect": False,
+                "check_interval_hours": 12,
+            }
+            render_config.validate(options)
+            self.render_all(options, data_dir)
+
+            apps = (data_dir / "apps.yaml").read_text(encoding="utf-8")
+            self.assertIn("state_agent_updates:", apps)
+            self.assertIn("enabled: true", apps)
+            self.assertIn(
+                'manifest_url: "https://downloads.example.invalid/plaf203/v1.2.3/latest.json"',
+                apps,
+            )
+            self.assertIn("check_on_connect: false", apps)
+            self.assertIn("check_interval_hours: 12", apps)
+
+    def test_rejects_invalid_state_agent_updates_config(self):
+        options = self.options()
+        options["state_agent_updates"] = "not-json"
+        with self.assertRaisesRegex(ValueError, "state_agent_updates"):
+            render_config.validate(options)
+
+        options = self.options()
+        options["state_agent_updates"] = {
+            "enabled": True,
+            "manifest_url": "",
+        }
+        with self.assertRaisesRegex(ValueError, "manifest_url"):
+            render_config.validate(options)
+
+        options = self.options()
+        options["state_agent_updates"] = {
+            "enabled": True,
+            "manifest_url": "http://example.invalid/latest.json",
+        }
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            render_config.validate(options)
+
+        options = self.options()
+        options["state_agent_updates"] = {
+            "enabled": True,
+            "manifest_url": "https://example.invalid/latest.json",
+            "check_interval_hours": 0,
+        }
+        with self.assertRaisesRegex(ValueError, "between 1 and 168"):
+            render_config.validate(options)
 
     def test_renders_multiple_resolved_streams(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -267,13 +319,14 @@ class RenderConfigTests(unittest.TestCase):
                 uid="PLAF20300000000ABCD0",
                 product_secret="must-not-leak",
             )
-            (data_dir / "options.json").write_text(json.dumps(options), encoding="utf-8")
+            (data_dir / "options.json").write_text(
+                json.dumps(options), encoding="utf-8"
+            )
             loaded = render_config.load_options(data_dir)
             render_config.validate(loaded)
             self.render_all(loaded, data_dir)
             generated = "\n".join(
-                path.read_text(encoding="utf-8")
-                for path in data_dir.glob("*.yaml")
+                path.read_text(encoding="utf-8") for path in data_dir.glob("*.yaml")
             )
             self.assertIn("petlibro://192.0.2.100?", generated)
             self.assertNotIn("must-not-leak", generated)

@@ -12,9 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 from string import Template
-from urllib.parse import urlencode
-from urllib.parse import urlsplit
-
+from urllib.parse import urlencode, urlsplit
 
 DEFAULTS = {
     "mqtt_host": "core-mosquitto",
@@ -29,6 +27,12 @@ DEFAULTS = {
     "petlibro_state_agent_url": "",
     "petlibro_state_agent_token": "",
     "petlibro_state_agent_timeout_seconds": 2,
+    "state_agent_updates": {
+        "enabled": False,
+        "manifest_url": "",
+        "check_on_connect": True,
+        "check_interval_hours": 24,
+    },
     "device_discovery": True,
     "product_filter": "PLAF203",
     "lan_cidr": "192.168.1.0/24",
@@ -56,6 +60,7 @@ DEFAULTS = {
 
 ENV_KEYS = {key: key.upper() for key in DEFAULTS}
 ENV_KEYS["devices"] = "DEVICES_JSON"
+ENV_KEYS["state_agent_updates"] = "STATE_AGENT_UPDATES_JSON"
 LEGACY_ENV_KEYS = {
     "device_ip": "DEVICE_IP",
     "product": "PRODUCT",
@@ -124,6 +129,11 @@ def load_options(data_dir: Path) -> dict[str, object]:
             options["devices"] = json.loads(options["devices"])
         except json.JSONDecodeError as err:
             raise ValueError("devices must be a JSON array") from err
+    if isinstance(options["state_agent_updates"], str):
+        try:
+            options["state_agent_updates"] = json.loads(options["state_agent_updates"])
+        except json.JSONDecodeError as err:
+            raise ValueError("state_agent_updates must be a JSON object") from err
     for key in BOOL_KEYS:
         options[key] = parse_bool(options[key], key)
     for key in INT_KEYS:
@@ -152,9 +162,7 @@ def validate(options: dict[str, object]) -> None:
 
     if not re.fullmatch(r"[A-Za-z0-9_-]+", str(options["mqtt_client_id"])):
         raise ValueError("mqtt_client_id contains unsupported characters")
-    if options["persist_feeder_mqtt"] and not str(
-        options["feeder_mqtt_host"]
-    ).strip():
+    if options["persist_feeder_mqtt"] and not str(options["feeder_mqtt_host"]).strip():
         raise ValueError(
             "feeder_mqtt_host is required when persist_feeder_mqtt is enabled"
         )
@@ -173,12 +181,59 @@ def validate(options: dict[str, object]) -> None:
             raise ValueError(
                 "petlibro_state_agent_url must be an HTTP(S) URL without credentials, query, or fragment"
             )
-        if "{" in state_agent_url.replace("{ip}", "") or "}" in state_agent_url.replace("{ip}", ""):
-            raise ValueError("petlibro_state_agent_url only supports the {ip} placeholder")
+        if "{" in state_agent_url.replace("{ip}", "") or "}" in state_agent_url.replace(
+            "{ip}", ""
+        ):
+            raise ValueError(
+                "petlibro_state_agent_url only supports the {ip} placeholder"
+            )
     if not 1 <= int(options["petlibro_state_agent_timeout_seconds"]) <= 10:
         raise ValueError(
             "petlibro_state_agent_timeout_seconds must be between 1 and 10"
         )
+    update_options = options.get("state_agent_updates")
+    if not isinstance(update_options, dict):
+        raise ValueError("state_agent_updates must be an object")
+    enabled = parse_bool(
+        update_options.get("enabled", False), "state_agent_updates.enabled"
+    )
+    manifest_url = str(update_options.get("manifest_url", "")).strip()
+    check_on_connect = parse_bool(
+        update_options.get("check_on_connect", True),
+        "state_agent_updates.check_on_connect",
+    )
+    try:
+        interval_hours = int(update_options.get("check_interval_hours", 24))
+    except (TypeError, ValueError) as err:
+        raise ValueError(
+            "state_agent_updates.check_interval_hours must be an integer"
+        ) from err
+    if not 1 <= interval_hours <= 168:
+        raise ValueError(
+            "state_agent_updates.check_interval_hours must be between 1 and 168"
+        )
+    if enabled and not manifest_url:
+        raise ValueError(
+            "state_agent_updates.manifest_url is required when state_agent_updates.enabled is true"
+        )
+    if manifest_url:
+        parsed_manifest_url = urlsplit(manifest_url)
+        if (
+            parsed_manifest_url.scheme != "https"
+            or not parsed_manifest_url.hostname
+            or parsed_manifest_url.username
+            or parsed_manifest_url.password
+            or parsed_manifest_url.fragment
+        ):
+            raise ValueError(
+                "state_agent_updates.manifest_url must be an HTTPS URL without credentials or fragment"
+            )
+    options["state_agent_updates"] = {
+        "enabled": enabled,
+        "manifest_url": manifest_url,
+        "check_on_connect": check_on_connect,
+        "check_interval_hours": interval_hours,
+    }
     if not 1 <= int(options["ip_resolve_timeout_seconds"]) <= 60:
         raise ValueError("ip_resolve_timeout_seconds must be between 1 and 60")
     if not 1 <= int(options["ip_discovery_broadcast_seconds"]) <= 10:
@@ -218,7 +273,9 @@ def validate(options: dict[str, object]) -> None:
         stream_names.add(stream_name)
         uid = str(device.get("uid", ""))
         if uid and not re.fullmatch(r"[A-Za-z0-9]{20}", uid):
-            raise ValueError(f"devices[{index}].uid must contain exactly 20 letters or numbers")
+            raise ValueError(
+                f"devices[{index}].uid must contain exactly 20 letters or numbers"
+            )
         ip_address = str(device.get("ip_address", ""))
         if ip_address:
             try:
@@ -457,7 +514,9 @@ def _valid_ip(value: object) -> bool:
     return True
 
 
-def render_go2rtc(options: dict[str, object], data_dir: Path, template_dir: Path) -> bool:
+def render_go2rtc(
+    options: dict[str, object], data_dir: Path, template_dir: Path
+) -> bool:
     registry = prepare_registry(options, data_dir)
     streams = []
     status_paths = []
@@ -525,6 +584,19 @@ def _yaml_entry(name: str, values: dict[str, object]) -> list[str]:
     for key, value in values.items():
         if isinstance(value, SecretRef):
             rendered = f"!secret {value.name}"
+            lines.append(f"  {key}: {rendered}")
+            continue
+        if isinstance(value, dict):
+            lines.append(f"  {key}:")
+            for nested_key, nested_value in value.items():
+                if isinstance(nested_value, bool):
+                    nested_rendered = "true" if nested_value else "false"
+                elif isinstance(nested_value, int):
+                    nested_rendered = str(nested_value)
+                else:
+                    nested_rendered = yaml_string(nested_value)
+                lines.append(f"    {nested_key}: {nested_rendered}")
+            continue
         elif isinstance(value, bool):
             rendered = "true" if value else "false"
         elif isinstance(value, int):
@@ -552,7 +624,9 @@ def state_agent_url_for(options: dict[str, object], device: dict[str, object]) -
     return f"http://{ip_address}:8765" if ip_address else ""
 
 
-def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: Path) -> bool:
+def render_appdaemon(
+    options: dict[str, object], data_dir: Path, template_dir: Path
+) -> bool:
     registry = prepare_registry(options, data_dir)
     common = {
         "MQTT_HOST": yaml_string(options["mqtt_host"]),
@@ -577,9 +651,7 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
             "renderer_command": "/usr/local/bin/petlibro-render-config",
             "go2rtc_service": "/run/service/go2rtc",
             "ip_resolve_timeout_seconds": options["ip_resolve_timeout_seconds"],
-            "ip_discovery_broadcast_seconds": options[
-                "ip_discovery_broadcast_seconds"
-            ],
+            "ip_discovery_broadcast_seconds": options["ip_discovery_broadcast_seconds"],
             "ip_discovery_max_unicast_per_second": options[
                 "ip_discovery_max_unicast_per_second"
             ],
@@ -621,6 +693,7 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
                     "petlibro_state_agent_timeout_seconds": options[
                         "petlibro_state_agent_timeout_seconds"
                     ],
+                    "state_agent_updates": options["state_agent_updates"],
                     "tutk_p2p_region": "REGION_US",
                     "go2rtc_stream_name": stream_name,
                     "camera_quality": options["camera_quality"],
@@ -693,6 +766,12 @@ def render_appdaemon(options: dict[str, object], data_dir: Path, template_dir: P
             os.environ.get(
                 "PETLIBRO_STATE_AGENT_SOURCE",
                 "/opt/petlibro-local/appdaemon/state_agent.py",
+            )
+        ),
+        app_dir / "state_agent_updates.py": Path(
+            os.environ.get(
+                "PETLIBRO_STATE_AGENT_UPDATES_SOURCE",
+                "/opt/petlibro-local/appdaemon/state_agent_updates.py",
             )
         ),
         app_dir / "state_coordinator.py": Path(

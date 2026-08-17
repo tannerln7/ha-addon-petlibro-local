@@ -24,17 +24,17 @@ on Raspberry Pi-class and other low-resource installations.
 
 ## Discovery-first setup
 
-| Option | Default | Description |
-|---|---|---|
-| `device_discovery` | `true` | Observe supported feeder MQTT topics and configure discovered devices |
-| `product_filter` | `PLAF203` | Supported product family; currently fixed to PLAF203 |
-| `lan_cidr` | `192.168.1.0/24` | IPv4 network searched by the UID-specific LAN probe; maximum size `/16` |
-| `ip_resolve_timeout_seconds` | `15` | Timeout for each UID-to-IP lookup; covers one paced `/24` sweep at the default rate |
-| `ip_discovery_broadcast_seconds` | `2` | Time reserved for low-impact broadcast discovery before fallback |
-| `ip_discovery_max_unicast_per_second` | `32` | Maximum paced fallback probes per second |
-| `ip_refresh_interval_minutes` | `360` | Maximum age of a healthy cached address |
-| `ip_retry_backoff_seconds` | `60` | Minimum delay after a failed lookup |
-| `devices` | `[]` | Optional advanced manual overrides |
+| Option                                | Default          | Description                                                                         |
+| ------------------------------------- | ---------------- | ----------------------------------------------------------------------------------- |
+| `device_discovery`                    | `true`           | Observe supported feeder MQTT topics and configure discovered devices               |
+| `product_filter`                      | `PLAF203`        | Supported product family; currently fixed to PLAF203                                |
+| `lan_cidr`                            | `192.168.1.0/24` | IPv4 network searched by the UID-specific LAN probe; maximum size `/16`             |
+| `ip_resolve_timeout_seconds`          | `15`             | Timeout for each UID-to-IP lookup; covers one paced `/24` sweep at the default rate |
+| `ip_discovery_broadcast_seconds`      | `2`              | Time reserved for low-impact broadcast discovery before fallback                    |
+| `ip_discovery_max_unicast_per_second` | `32`             | Maximum paced fallback probes per second                                            |
+| `ip_refresh_interval_minutes`         | `360`            | Maximum age of a healthy cached address                                             |
+| `ip_retry_backoff_seconds`            | `60`             | Minimum delay after a failed lookup                                                 |
+| `devices`                             | `[]`             | Optional advanced manual overrides                                                  |
 
 Normal setup does not require a serial, UID, or IP address. Start the backend,
 then reboot the feeder so the coordinator can observe `DEVICE_START_EVENT`.
@@ -58,20 +58,24 @@ and `device_ip` options are migrated into this registry when all three exist.
 
 ## MQTT
 
-| Option | Default | Description |
-|---|---|---|
-| `mqtt_host` | `core-mosquitto` | Broker hostname or address used by AppDaemon only |
-| `mqtt_port` | `1883` | Broker TCP port used by AppDaemon only |
-| `mqtt_username` | empty | AppDaemon's broker username |
-| `mqtt_password` | empty | AppDaemon's broker password; stored in a mode-0600 secrets file |
-| `mqtt_client_id` | `petlibro_local_backend` | Unique MQTT client ID for this backend instance |
-| `persist_feeder_mqtt` | `false` | Opt in to writing a validated broker destination to the physical feeder |
-| `feeder_mqtt_host` | empty | Stable LAN IP or multi-label DNS name reachable by the feeder |
-| `feeder_mqtt_port` | `1883` | Feeder-facing broker TCP port |
-| `feeder_https_addr` | empty | Optional HTTPS endpoint included only in an explicit feeder update |
-| `petlibro_state_agent_url` | empty | Optional state API URL; empty derives `http://<feeder-ip>:8765`, and `{ip}` is supported |
-| `petlibro_state_agent_token` | empty | Bearer token configured in the feeder-side read-only state agent |
-| `petlibro_state_agent_timeout_seconds` | `2` | Local API request timeout, from 1 to 10 seconds |
+| Option                                     | Default                  | Description                                                                              |
+| ------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------------------- |
+| `mqtt_host`                                | `core-mosquitto`         | Broker hostname or address used by AppDaemon only                                        |
+| `mqtt_port`                                | `1883`                   | Broker TCP port used by AppDaemon only                                                   |
+| `mqtt_username`                            | empty                    | AppDaemon's broker username                                                              |
+| `mqtt_password`                            | empty                    | AppDaemon's broker password; stored in a mode-0600 secrets file                          |
+| `mqtt_client_id`                           | `petlibro_local_backend` | Unique MQTT client ID for this backend instance                                          |
+| `persist_feeder_mqtt`                      | `false`                  | Opt in to writing a validated broker destination to the physical feeder                  |
+| `feeder_mqtt_host`                         | empty                    | Stable LAN IP or multi-label DNS name reachable by the feeder                            |
+| `feeder_mqtt_port`                         | `1883`                   | Feeder-facing broker TCP port                                                            |
+| `feeder_https_addr`                        | empty                    | Optional HTTPS endpoint included only in an explicit feeder update                       |
+| `petlibro_state_agent_url`                 | empty                    | Optional state API URL; empty derives `http://<feeder-ip>:8765`, and `{ip}` is supported |
+| `petlibro_state_agent_token`               | empty                    | Bearer token configured in the feeder-side read-only state agent                         |
+| `petlibro_state_agent_timeout_seconds`     | `2`                      | Local API request timeout, from 1 to 10 seconds                                          |
+| `state_agent_updates.enabled`              | `false`                  | Enable signed State Agent release checking after feeder-side bootstrap                   |
+| `state_agent_updates.manifest_url`         | empty                    | Required HTTPS `latest.json` URL when updates are enabled                                |
+| `state_agent_updates.check_on_connect`     | `true`                   | Allow a throttled release check after connection or Home Assistant birth                 |
+| `state_agent_updates.check_interval_hours` | `24`                     | Periodic check interval, from 1 to 168 hours                                             |
 
 These credentials authenticate the backend to the broker. They do not provision
 the feeder or replace its factory-provisioned broker credentials. The feeder's
@@ -98,16 +102,16 @@ field from the update.
 
 ## Camera and go2rtc
 
-| Option | Default | Description |
-|---|---|---|
+| Option               | Default           | Description                                                                                      |
+| -------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
 | `go2rtc_stream_name` | `petlibro_feeder` | Compatibility name for a migrated legacy device; discovered devices derive a product/serial name |
-| `camera_quality` | `hd` | Requested `hd` or `sd` stream |
-| `ack_mode` | `hybrid` | Petlibro media-window ACK mapping: `high`, `contig`, or `hybrid` |
-| `send_delay_ctrl` | `true` | Sends the AVAPI data-delay control before `IPCAM_START` |
-| `hd_probe_wait_ms` | `15000` | Bounded wait for a higher-resolution SPS in HD mode; maximum 60000 |
-| `go2rtc_api_port` | `1984` | Web interface and API TCP port |
-| `go2rtc_rtsp_port` | `8554` | RTSP TCP port |
-| `go2rtc_webrtc_port` | `8555` | WebRTC TCP/UDP port |
+| `camera_quality`     | `hd`              | Requested `hd` or `sd` stream                                                                    |
+| `ack_mode`           | `hybrid`          | Petlibro media-window ACK mapping: `high`, `contig`, or `hybrid`                                 |
+| `send_delay_ctrl`    | `true`            | Sends the AVAPI data-delay control before `IPCAM_START`                                          |
+| `hd_probe_wait_ms`   | `15000`           | Bounded wait for a higher-resolution SPS in HD mode; maximum 60000                               |
+| `go2rtc_api_port`    | `1984`            | Web interface and API TCP port                                                                   |
+| `go2rtc_rtsp_port`   | `8554`            | RTSP TCP port                                                                                    |
+| `go2rtc_webrtc_port` | `8555`            | WebRTC TCP/UDP port                                                                              |
 
 The tested HD stream may first emit a 640x360 SPS and switch to 1920x1080 later.
 The default 15-second probe wait advertises the higher resolution only when that
@@ -129,11 +133,19 @@ is not used as feeder truth. If the API becomes unreachable, the controller
 keeps MQTT heartbeat handling active but blocks setting and plan writes until a
 fresh reconciliation succeeds.
 
-Install the matching State Agent 0.2.0 build from the repository's
+Install the matching State Agent 0.3.0 build from the repository's
 `feeder-state-agent/` component. It classifies fields as persistent,
 effective-cached, or runtime; writable Home Assistant entities verify only the
 persistent field. Cached `enableX` bytes remain diagnostic even if their value
 temporarily differs from the user's persistent switch.
+
+State Agent OTA is optional and does not replace the initial manual feeder
+installation. After its runit supervisor is bootstrapped, enabling
+`state_agent_updates` adds a firmware Update entity and a separate **Check for
+State Agent Updates** button. The add-on validates signed HTTPS release metadata
+and uploads the artifact to the authenticated feeder API. It never asks the
+feeder to download a URL. See the [configuration reference](../docs/configuration.md#state-agent-updates)
+and [State Agent guide](../feeder-state-agent/README.md#bootstrap-and-signed-updates).
 
 The nine **Feeding schedule** text entities accept flat JSON. Each document's
 `id` must match its displayed slot number and must already exist on the feeder.
@@ -149,11 +161,11 @@ never used to construct the command.
 
 ## Camera metadata publishing
 
-| Option | Default | Description |
-|---|---|---|
-| `publish_camera_metadata` | `true` | Publish retained camera state and availability for frontend integrations |
-| `camera_metadata_topic_prefix` | empty | Optional prefix; empty derives `petlibro_local/<product>/<serial>/camera` |
-| `camera_metadata_interval_seconds` | `30` | Retained heartbeat interval; allowed range 5–300 seconds |
+| Option                             | Default | Description                                                               |
+| ---------------------------------- | ------- | ------------------------------------------------------------------------- |
+| `publish_camera_metadata`          | `true`  | Publish retained camera state and availability for frontend integrations  |
+| `camera_metadata_topic_prefix`     | empty   | Optional prefix; empty derives `petlibro_local/<product>/<serial>/camera` |
+| `camera_metadata_interval_seconds` | `30`    | Retained heartbeat interval; allowed range 5–300 seconds                  |
 
 The backend marks metadata stale after three heartbeat intervals. It publishes
 state at `<prefix>/state` and availability at `<prefix>/availability`, both
@@ -162,11 +174,11 @@ for payload fields and offline behavior.
 
 ## Diagnostics
 
-| Option | Default | Description |
-|---|---|---|
-| `log_level` | `info` | `critical`, `error`, `warning`, `info`, `debug`, or `trace` |
-| `verbose_logs` | `false` | Deprecated compatibility key; `true` migrates normal `info` logging to `debug` |
-| `enable_debug_dumps` | `false` | Writes decrypted C2D/D2C protocol dumps under `/data` |
+| Option               | Default | Description                                                                    |
+| -------------------- | ------- | ------------------------------------------------------------------------------ |
+| `log_level`          | `info`  | `critical`, `error`, `warning`, `info`, `debug`, or `trace`                    |
+| `verbose_logs`       | `false` | Deprecated compatibility key; `true` migrates normal `info` logging to `debug` |
+| `enable_debug_dumps` | `false` | Writes decrypted C2D/D2C protocol dumps under `/data`                          |
 
 `info` contains operational milestones. `debug` adds bounded resolver stats,
 registry changes, camera metadata transitions, and five-second go2rtc summaries

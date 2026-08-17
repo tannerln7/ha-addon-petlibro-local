@@ -3,13 +3,28 @@ from dataclasses import replace
 from unittest.mock import patch
 
 import pytest
-
 from state_agent import (
     FeederTruth,
     StateAgentBadResponse,
     StateAgentClient,
+    StateAgentUpdateStatus,
     diff_settings_raw,
 )
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "pending",
+        "activating",
+        "candidate_active",
+        "probation_confirmed",
+        "rollback_in_progress",
+    ],
+)
+def test_update_status_reports_all_transaction_phases_in_progress(phase):
+    status = StateAgentUpdateStatus(phase, "test", "1.0.0", "0.3.0")
+    assert status.in_progress is True
 
 
 class FakeResponse:
@@ -97,9 +112,7 @@ def core_payload(*, enable_audio_raw=1, audio_times=2, settings_raw=None):
 
 
 def test_core_parser_builds_explicit_truth_models():
-    truth = FeederTruth.from_dict(
-        core_payload(settings_raw={"attr_state_0x0012": 0})
-    )
+    truth = FeederTruth.from_dict(core_payload(settings_raw={"attr_state_0x0012": 0}))
 
     assert truth.settings["volume"] == 76
     assert truth.revisions.core_rev == "fnv64:core"
@@ -120,9 +133,7 @@ def test_raw_settings_diff_identifies_changed_file_fields_without_semantic_guess
         "attr_state_0x0013": 7,
     }
 
-    assert diff_settings_raw(before, after) == {
-        "attr_state_0x0012": (0, 1)
-    }
+    assert diff_settings_raw(before, after) == {"attr_state_0x0012": (0, 1)}
 
 
 def test_core_parser_rejects_count_mismatch_and_duplicate_days():
@@ -200,9 +211,7 @@ def test_client_sends_bearer_auth_and_parses_all_read_only_endpoints():
         assert client.health()["ok"] is True
         assert client.revisions().revisions.core_rev == "fnv64:core"
         assert client.core().plans.by_id(1).portions == 10
-        assert client.core(raw=True).settings_raw == {
-            "attr_state_0x0012": 1
-        }
+        assert client.core(raw=True).settings_raw == {"attr_state_0x0012": 1}
         assert client.feed_events().events == ()
 
     assert [call.args[0].full_url for call in urlopen.call_args_list] == [
@@ -213,7 +222,62 @@ def test_client_sends_bearer_auth_and_parses_all_read_only_endpoints():
         "http://192.0.2.1:8765/v1/feed-events",
     ]
     assert all(
-        call.args[0].get_header("Authorization")
-        == "Bearer synthetic-test-token"
+        call.args[0].get_header("Authorization") == "Bearer synthetic-test-token"
         for call in urlopen.call_args_list
     )
+
+
+def test_client_parses_version_update_status_and_update_submit_result():
+    responses = [
+        FakeResponse(
+            {
+                "ok": True,
+                "version": "1.2.3",
+                "api_version": 1,
+                "update_api_version": 1,
+                "platform": "linux-armv7-eabihf",
+            }
+        ),
+        FakeResponse(
+            {
+                "ok": True,
+                "status": "idle",
+                "reason": "none",
+                "candidate_version": None,
+                "previous_version": None,
+            }
+        ),
+        FakeResponse(
+            {
+                "ok": True,
+                "status": "pending",
+                "reason": "candidate_ready",
+                "candidate_version": "1.2.3",
+                "previous_version": "1.2.2",
+            }
+        ),
+    ]
+    client = StateAgentClient(
+        "http://192.0.2.1:8765", "synthetic-test-token", timeout_seconds=1
+    )
+
+    with patch("state_agent.request.urlopen", side_effect=responses) as urlopen:
+        version = client.version()
+        assert version.version == "1.2.3"
+        assert version.platform == "linux-armv7-eabihf"
+        status = client.update_status()
+        assert status.status == "idle"
+        assert status.candidate_version is None
+        result = client.submit_update(b"PLAFOTA1" + b"x" * 64)
+        assert result.accepted is True
+        assert result.status == "pending"
+
+    assert [call.args[0].full_url for call in urlopen.call_args_list] == [
+        "http://192.0.2.1:8765/v1/version",
+        "http://192.0.2.1:8765/v1/update-status",
+        "http://192.0.2.1:8765/v1/update",
+    ]
+    post_request = urlopen.call_args_list[2].args[0]
+    assert post_request.get_method() == "POST"
+    header_pairs = {key.lower(): value for key, value in post_request.header_items()}
+    assert header_pairs.get("content-type") == "application/octet-stream"

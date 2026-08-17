@@ -7,15 +7,15 @@ historical snapshots only.
 
 ## Components
 
-| Path | Responsibility |
-|---|---|
-| `petlibro-local/go2rtc/` | Patched go2rtc source and Petlibro camera protocol |
-| `petlibro-local/appdaemon/` | PLAF203 AppDaemon MQTT controller |
-| `feeder-state-agent/` | Authenticated read-only feeder-resident state decoder/API |
-| `petlibro-local/` | Home Assistant add-on metadata, image, templates, and services |
-| `docker/` | Host-network Docker Compose fallback |
-| `scripts/` | Build, run, stream-test, log collection, and validation helpers |
-| `tests/` | Backend packaging and configuration-rendering tests |
+| Path                        | Responsibility                                                  |
+| --------------------------- | --------------------------------------------------------------- |
+| `petlibro-local/go2rtc/`    | Patched go2rtc source and Petlibro camera protocol              |
+| `petlibro-local/appdaemon/` | PLAF203 AppDaemon MQTT controller                               |
+| `feeder-state-agent/`       | Authenticated read-only feeder-resident state decoder/API       |
+| `petlibro-local/`           | Home Assistant add-on metadata, image, templates, and services  |
+| `docker/`                   | Host-network Docker Compose fallback                            |
+| `scripts/`                  | Build, run, stream-test, log collection, and validation helpers |
+| `tests/`                    | Backend packaging and configuration-rendering tests             |
 
 No submodule, subtree, or synchronization process links these sources to their
 former repositories.
@@ -45,8 +45,8 @@ Run the complete local validation suite:
 ```
 
 The script validates shell and Python syntax, configuration rendering,
-the feeder State Agent host build, AppDaemon protocol tests when its dependency
-is installed, the Petlibro Go
+the feeder State Agent host build with vendored Monocypher and generated release
+metadata, AppDaemon protocol tests when its dependency is installed, the Petlibro Go
 package, the complete go2rtc build, Compose interpolation, whitespace, and
 tracked-file hygiene.
 
@@ -130,6 +130,24 @@ feeder truth API. Keep its errors sanitized, its bearer token private, and its
 response models explicit. Calls belong in AppDaemon's executor, never the main
 callback thread.
 
+`appdaemon/src/state_agent_updates.py` owns optional signed State Agent release
+checking and upload. It is independent from `FeederStateCoordinator`: it
+downloads only HTTPS release files, verifies the Ed25519 signature over the
+exact raw manifest before parsing it, and passes a fixed binary frame to the
+feeder API. Status polling after an upload must query the feeder only, never
+refetch the public manifest. The only repository trust-anchor source is
+`feeder-state-agent/release-public-key.hex`; do not add a second key copy or a
+private signing key. Treat that file as the candidate embedded trust anchor for
+the next State Agent build; the private signer authorizing the current
+candidate is separate. Normal releases use matching signer and candidate keys
+and omit `--rotate-trust-anchor`. Rotation releases intentionally set
+`release-public-key.hex` to the next key, sign with the previous private key,
+and pass `--rotate-trust-anchor` so the current signer authorizes the transition
+candidate, and that candidate independently embeds the next trust anchor. The
+tool reports SHA-256 fingerprints for the signer-derived public key and
+candidate trust anchor; normal mode requires equality, rotation mode requires
+inequality, and self-verification uses the signer-derived public key.
+
 `feeder-state-agent/plaf203_state_agent.c` owns the binary decoder and HTTP
 schema. It must read only allowlisted files, require the exact 236-byte
 `state.bin`, parse unaligned integers explicitly as little-endian, and derive
@@ -137,6 +155,35 @@ decoded values plus revisions from the same per-request buffers. Preserve the
 `persistent`, `effective_cached`, and `runtime` distinction: only persistent
 fields may verify a setting command. Its feed-event endpoint represents the
 firmware's pending outbound ring, not durable history.
+
+The State Agent's OTA routes are `/v1/version`, `/v1/update-status`, and
+`POST /v1/update`. Keep frame parsing incremental, accept no caller-selected
+paths or commands, and stage only below `/user/data/local-state-agent/update`.
+The feeder-side runit supervisor, rather than the agent process, owns
+stop/swap/start/probation and its single rolling rollback. Staging and
+activation must hold the shared kernel lock at `update/transaction.lock`.
+Every transaction-significant replacement must use same-directory temp write,
+file fsync, rename, and directory fsync through the fixed-path
+`plaf203-update-fs` helper; significant unlinks require directory fsync. Keep
+the explicit `pending`, `activating`, `candidate_active`,
+`probation_confirmed`, `rollback_in_progress`, and terminal phase semantics.
+The feeder bootstrap requires `/usr/bin/flock`, `/usr/bin/nc`, `/usr/bin/sv`,
+and both ARM binaries. See
+[`feeder-state-agent/README.md`](feeder-state-agent/README.md) for the signed
+release and one-time bootstrap procedure.
+
+The manifest schema stays unchanged during trust-anchor rotation and carries no
+replacement trust key. The next key remains compiled into the executable, not
+supplied remotely or fetched from any online keyring. For a single-key A→B
+rotation, the sequence is: deployed State Agent A trusts A; deployed AppDaemon
+B trusts A; build candidate State Agent C with `release-public-key.hex=B`; sign
+the transition manifest with private A plus `--rotate-trust-anchor`; existing
+AppDaemon A verifies; existing State Agent A verifies; the candidate installs
+and now trusts B; confirm probation succeeded and rollback is no longer
+pending; update AppDaemon/package trust anchor to B; future releases are signed
+by B normally. If a feeder misses the A→B hand-off before AppDaemon moves to B,
+temporarily run an A-trusting AppDaemon/release workflow or use manual SSH
+recovery before retrying.
 
 `appdaemon/src/state_coordinator.py` is the only owner of persistent feeder
 truth, revisions, pending writes, and plan collections. Do not reintroduce a
@@ -148,16 +195,16 @@ AppDaemon `callback(result=...)` form.
 
 The controller runtime is intentionally split by responsibility:
 
-| Module | Boundary |
-|---|---|
-| `plaf203.py` | Thin AppDaemon lifecycle and dependency wiring |
-| `mqtt_client.py` / `protocol.py` | MQTT transport and PLAF203 wire models |
-| `backend.py` | Required feeder protocol responses, low-level commands, acknowledgements, and telemetry callbacks; never feeder truth |
-| `ha_entities.py` | MQTT discovery plus projection of verified truth into retained HA state |
-| `settings_map.py` / `commands.py` | Canonical value mappings and user-intent routing into coordinator requests |
-| `feed_plans.py` | Plan parsing, full-collection wire serialization, and HA display projection |
-| `telemetry.py` | Non-persistent operational state such as Wi-Fi, power, food, and SD-card status |
-| `storage.py` | Manual-feed preference and a stale diagnostic snapshot only |
+| Module                            | Boundary                                                                                                              |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `plaf203.py`                      | Thin AppDaemon lifecycle and dependency wiring                                                                        |
+| `mqtt_client.py` / `protocol.py`  | MQTT transport and PLAF203 wire models                                                                                |
+| `backend.py`                      | Required feeder protocol responses, low-level commands, acknowledgements, and telemetry callbacks; never feeder truth |
+| `ha_entities.py`                  | MQTT discovery plus projection of verified truth into retained HA state                                               |
+| `settings_map.py` / `commands.py` | Canonical value mappings and user-intent routing into coordinator requests                                            |
+| `feed_plans.py`                   | Plan parsing, full-collection wire serialization, and HA display projection                                           |
+| `telemetry.py`                    | Non-persistent operational state such as Wi-Fi, power, food, and SD-card status                                       |
+| `storage.py`                      | Manual-feed preference and a stale diagnostic snapshot only                                                           |
 
 Keep persistent-state changes on the path `commands -> state_coordinator ->
 backend`. Acknowledgements return from `backend` to the coordinator, and only a

@@ -1,7 +1,8 @@
 services:
   petlibro-local:
     build:
-      context: ../petlibro-local
+      context: ..
+      dockerfile: petlibro-local/Dockerfile
       args:
         BUILD_ARCH: amd64
         BUILD_VERSION: local
@@ -23,6 +24,7 @@ services:
       PETLIBRO_STATE_AGENT_URL: ${PETLIBRO_STATE_AGENT_URL:-}
       PETLIBRO_STATE_AGENT_TOKEN: ${PETLIBRO_STATE_AGENT_TOKEN:-}
       PETLIBRO_STATE_AGENT_TIMEOUT_SECONDS: ${PETLIBRO_STATE_AGENT_TIMEOUT_SECONDS:-2}
+      STATE_AGENT_UPDATES_JSON: '${STATE_AGENT_UPDATES_JSON:-{"enabled":false,"manifest_url":"","check_on_connect":true,"check_interval_hours":24}}'
       DEVICE_DISCOVERY: ${DEVICE_DISCOVERY:-1}
       PRODUCT_FILTER: ${PRODUCT_FILTER:-PLAF203}
       LAN_CIDR: ${LAN_CIDR:-192.168.1.0/24}

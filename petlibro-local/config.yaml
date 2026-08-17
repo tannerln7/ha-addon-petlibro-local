@@ -36,6 +36,11 @@ options:
   petlibro_state_agent_url: ""
   petlibro_state_agent_token: ""
   petlibro_state_agent_timeout_seconds: 2
+  state_agent_updates:
+    enabled: false
+    manifest_url: ""
+    check_on_connect: true
+    check_interval_hours: 24
   device_discovery: true
   product_filter: PLAF203
   lan_cidr: 192.168.1.0/24
@@ -72,6 +77,11 @@ schema:
   petlibro_state_agent_url: str
   petlibro_state_agent_token: password
   petlibro_state_agent_timeout_seconds: int(1,10)
+  state_agent_updates:
+    enabled: bool
+    manifest_url: str
+    check_on_connect: bool
+    check_interval_hours: int(1,168)
   device_discovery: bool
   product_filter: list(PLAF203)
   lan_cidr: str

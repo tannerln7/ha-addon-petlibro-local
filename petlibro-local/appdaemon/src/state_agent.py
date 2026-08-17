@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import enum
 import json
-import socket
-from typing import Any, Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any
 from urllib import error, parse, request
 
-
 MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_UPDATE_UPLOAD_BYTES = 32 * 1024 * 1024 + 16 * 1024 + 64 + 20
 
 
 class StateAgentError(RuntimeError):
@@ -49,7 +49,7 @@ class FeederRevisions:
     queue_index_rev: str
 
     @classmethod
-    def from_dict(cls, data: object) -> "FeederRevisions":
+    def from_dict(cls, data: object) -> FeederRevisions:
         obj = _object(data, "revisions")
         values = {
             key: _nonempty_string(obj.get(key), f"revisions.{key}")
@@ -78,7 +78,7 @@ class FeederQueue:
     pending: bool
 
     @classmethod
-    def from_dict(cls, data: object, name: str = "queue") -> "FeederQueue":
+    def from_dict(cls, data: object, name: str = "queue") -> FeederQueue:
         obj = _object(data, name)
         return cls(
             head=_integer(obj.get("head"), f"{name}.head", 0, 255),
@@ -96,9 +96,7 @@ class FeederSettings:
     classes: Mapping[str, SettingClass] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(
-        cls, data: object, classes_data: object = None
-    ) -> "FeederSettings":
+    def from_dict(cls, data: object, classes_data: object = None) -> FeederSettings:
         obj = _object(data, "settings")
         classes_obj = _optional_object(classes_data, "setting_classes")
         classes: dict[str, SettingClass] = {}
@@ -154,7 +152,7 @@ class FeederPlan:
     opaque_hex: str
 
     @classmethod
-    def from_dict(cls, data: object, index: int) -> "FeederPlan":
+    def from_dict(cls, data: object, index: int) -> FeederPlan:
         name = f"plans.semantic_records[{index}]"
         obj = _object(data, name)
         days_raw_obj = obj.get("days_raw")
@@ -263,7 +261,7 @@ class FeederPlans:
     semantic_records: tuple[FeederPlan, ...]
 
     @classmethod
-    def from_dict(cls, data: object) -> "FeederPlans":
+    def from_dict(cls, data: object) -> FeederPlans:
         obj = _object(data, "plans")
         if obj.get("ok") is not True:
             raise StateAgentBadResponse("plans.ok must be true")
@@ -282,9 +280,7 @@ class FeederPlans:
         ids = [plan.id for plan in records]
         if len(ids) != len(set(ids)):
             raise StateAgentBadResponse("plans.semantic_records contains duplicate IDs")
-        plan_bin_size = _integer(
-            obj.get("plan_bin_size"), "plans.plan_bin_size", 0
-        )
+        plan_bin_size = _integer(obj.get("plan_bin_size"), "plans.plan_bin_size", 0)
         record_size = _integer(obj.get("record_size"), "plans.record_size", 0)
         even_split = _boolean(obj.get("even_split"), "plans.even_split")
         if record_size != 47 or plan_bin_size != count * 47 or not even_split:
@@ -298,7 +294,9 @@ class FeederPlans:
         )
 
     def by_id(self, plan_id: int) -> FeederPlan | None:
-        return next((plan for plan in self.semantic_records if plan.id == plan_id), None)
+        return next(
+            (plan for plan in self.semantic_records if plan.id == plan_id), None
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -321,7 +319,7 @@ class FeederTruth:
     settings_raw: Mapping[str, object] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: object) -> "FeederTruth":
+    def from_dict(cls, data: object) -> FeederTruth:
         obj = _successful_object(data)
         return cls(
             read_ms=_integer(obj.get("read_ms"), "read_ms", 0),
@@ -363,7 +361,7 @@ class RevisionSnapshot:
     queue: FeederQueue
 
     @classmethod
-    def from_dict(cls, data: object) -> "RevisionSnapshot":
+    def from_dict(cls, data: object) -> RevisionSnapshot:
         obj = _successful_object(data)
         return cls(
             read_ms=_integer(obj.get("read_ms"), "read_ms", 0),
@@ -380,7 +378,7 @@ class FeedEventSnapshot:
     semantics: str
 
     @classmethod
-    def from_dict(cls, data: object) -> "FeedEventSnapshot":
+    def from_dict(cls, data: object) -> FeedEventSnapshot:
         obj = _successful_object(data)
         events = obj.get("events")
         if not isinstance(events, list) or not all(
@@ -395,6 +393,86 @@ class FeedEventSnapshot:
         )
 
 
+@dataclass(frozen=True)
+class StateAgentVersion:
+    version: str
+    api_version: int
+    update_api_version: int
+    platform: str
+
+    @classmethod
+    def from_dict(cls, data: object) -> StateAgentVersion:
+        obj = _successful_object(data)
+        return cls(
+            version=_nonempty_string(obj.get("version"), "version"),
+            api_version=_integer(obj.get("api_version"), "api_version", 1),
+            update_api_version=_integer(
+                obj.get("update_api_version"), "update_api_version", 1
+            ),
+            platform=_nonempty_string(obj.get("platform"), "platform"),
+        )
+
+
+@dataclass(frozen=True)
+class StateAgentUpdateStatus:
+    status: str
+    reason: str
+    candidate_version: str | None
+    previous_version: str | None
+
+    @property
+    def in_progress(self) -> bool:
+        return self.status in {
+            "pending",
+            "activating",
+            "candidate_active",
+            "probation_confirmed",
+            "rollback_in_progress",
+        }
+
+    @property
+    def last_error(self) -> str:
+        if self.status in {"failed", "rolled_back"}:
+            return self.reason
+        return ""
+
+    @classmethod
+    def from_dict(cls, data: object) -> StateAgentUpdateStatus:
+        obj = _successful_object(data)
+        return cls(
+            status=_nonempty_string(obj.get("status"), "status"),
+            reason=_nonempty_string(obj.get("reason"), "reason"),
+            candidate_version=_optional_nonempty_string(
+                obj.get("candidate_version"), "candidate_version"
+            ),
+            previous_version=_optional_nonempty_string(
+                obj.get("previous_version"), "previous_version"
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class StateAgentUpdateSubmitResult:
+    status: str
+    reason: str
+    candidate_version: str | None
+    previous_version: str | None
+
+    @property
+    def accepted(self) -> bool:
+        return self.status == "pending"
+
+    @classmethod
+    def from_dict(cls, data: object) -> StateAgentUpdateSubmitResult:
+        status = StateAgentUpdateStatus.from_dict(data)
+        return cls(
+            status=status.status,
+            reason=status.reason,
+            candidate_version=status.candidate_version,
+            previous_version=status.previous_version,
+        )
+
+
 class StateAgentClient:
     """Small blocking HTTP client intended to run in an AppDaemon executor."""
 
@@ -403,7 +481,9 @@ class StateAgentClient:
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("state-agent URL must be an HTTP(S) URL with a host")
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("state-agent URL must not contain credentials, query, or fragment")
+            raise ValueError(
+                "state-agent URL must not contain credentials, query, or fragment"
+            )
         if timeout_seconds <= 0:
             raise ValueError("state-agent timeout must be positive")
         self._base_url = parse.urlunsplit(
@@ -425,35 +505,79 @@ class StateAgentClient:
     def feed_events(self) -> FeedEventSnapshot:
         return FeedEventSnapshot.from_dict(self._get("/v1/feed-events"))
 
-    def _get(self, path: str) -> Mapping[str, object]:
-        req = request.Request(
-            self._base_url + path,
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {self._token}",
-            },
-            method="GET",
+    def version(self) -> StateAgentVersion:
+        return StateAgentVersion.from_dict(self._get("/v1/version"))
+
+    def update_status(self) -> StateAgentUpdateStatus:
+        return StateAgentUpdateStatus.from_dict(self._get("/v1/update-status"))
+
+    def submit_update(self, payload: bytes) -> StateAgentUpdateSubmitResult:
+        if not isinstance(payload, (bytes, bytearray)):
+            raise TypeError("update payload must be bytes")
+        if len(payload) == 0:
+            raise ValueError("update payload must not be empty")
+        if len(payload) > MAX_UPDATE_UPLOAD_BYTES:
+            raise ValueError("update payload exceeds the size limit")
+        body = self._request(
+            "/v1/update",
+            method="POST",
+            body=bytes(payload),
+            content_type="application/octet-stream",
+            accept="application/json",
         )
         try:
-            with request.urlopen(req, timeout=self._timeout_seconds) as response:
-                body = response.read(MAX_RESPONSE_BYTES + 1)
-        except error.HTTPError as exc:
-            if exc.code in {401, 403}:
-                raise StateAgentUnauthorized("state agent rejected authentication") from None
-            raise StateAgentUnavailable(
-                f"state agent returned HTTP status {exc.code}"
-            ) from None
-        except (TimeoutError, socket.timeout):
-            raise StateAgentTimeout("state agent request timed out") from None
-        except (error.URLError, OSError):
-            raise StateAgentUnavailable("state agent is unavailable") from None
-        if len(body) > MAX_RESPONSE_BYTES:
-            raise StateAgentBadResponse("state agent response exceeds size limit")
+            decoded = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise StateAgentBadResponse("state agent returned invalid JSON") from None
+        return StateAgentUpdateSubmitResult.from_dict(decoded)
+
+    def _get(self, path: str) -> Mapping[str, object]:
+        body = self._request(path, method="GET", accept="application/json")
         try:
             decoded = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise StateAgentBadResponse("state agent returned invalid JSON") from None
         return _object(decoded, "response")
+
+    def _request(
+        self,
+        path: str,
+        *,
+        method: str,
+        accept: str,
+        body: bytes | None = None,
+        content_type: str | None = None,
+    ) -> bytes:
+        headers = {
+            "Accept": accept,
+            "Authorization": f"Bearer {self._token}",
+        }
+        if content_type is not None:
+            headers["Content-Type"] = content_type
+        req = request.Request(
+            self._base_url + path,
+            headers=headers,
+            data=body,
+            method=method,
+        )
+        try:
+            with request.urlopen(req, timeout=self._timeout_seconds) as response:
+                payload = response.read(MAX_RESPONSE_BYTES + 1)
+        except error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                raise StateAgentUnauthorized(
+                    "state agent rejected authentication"
+                ) from None
+            raise StateAgentUnavailable(
+                f"state agent returned HTTP status {exc.code}"
+            ) from None
+        except TimeoutError:
+            raise StateAgentTimeout("state agent request timed out") from None
+        except (error.URLError, OSError):
+            raise StateAgentUnavailable("state agent is unavailable") from None
+        if len(payload) > MAX_RESPONSE_BYTES:
+            raise StateAgentBadResponse("state agent response exceeds size limit")
+        return payload
 
 
 class UnavailableStateAgentClient:
@@ -466,6 +590,9 @@ class UnavailableStateAgentClient:
     revisions = _unavailable
     core = _unavailable
     feed_events = _unavailable
+    version = _unavailable
+    update_status = _unavailable
+    submit_update = _unavailable
 
 
 def _successful_object(data: object) -> Mapping[str, Any]:
@@ -502,6 +629,14 @@ def diff_settings_raw(
 def _nonempty_string(data: object, name: str) -> str:
     if not isinstance(data, str) or not data:
         raise StateAgentBadResponse(f"{name} must be a non-empty string")
+    return data
+
+
+def _optional_nonempty_string(data: object, name: str) -> str | None:
+    if data is None:
+        return None
+    if not isinstance(data, str) or not data:
+        raise StateAgentBadResponse(f"{name} must be null or a non-empty string")
     return data
 
 

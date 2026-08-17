@@ -381,20 +381,20 @@ class WeekdaySchedule:
         return WeekdaySchedule(set(args))
 
     @staticmethod
-    def from_list(data: [str]) -> WeekdaySchedule:
-        weekdays: [Weekday] = []
+    def from_list(data: list[str]) -> WeekdaySchedule:
+        weekdays: list[Weekday] = []
 
         for item in data:
             weekdays.append(Weekday[item])
 
         return WeekdaySchedule(weekdays)
 
-    def to_list(self) -> [str]:
+    def to_list(self) -> list[str]:
         return [
             item.name for item in sorted(self.value, key=lambda item: item.value)
         ]
 
-    def to_mqtt_payload_value(self) -> [int]:
+    def to_mqtt_payload_value(self) -> list[int]:
         data = sorted(v.value for v in self.value)
 
         # Pad the array with 0s up to the full length of 7 elements
@@ -403,7 +403,7 @@ class WeekdaySchedule:
         return data
 
     @staticmethod
-    def from_mqtt_payload_value(value: [int]) -> WeekdaySchedule:
+    def from_mqtt_payload_value(value: list[int]) -> WeekdaySchedule:
         weekday_schedule = WeekdaySchedule()
 
         for v in value:
@@ -1233,14 +1233,14 @@ class FeedingPlanServiceIn:
     message_id: MessageId
     timestamp: Timestamp
     code: Code
-    plans: [FeedingPlanIn]
+    plans: list[FeedingPlanIn]
     # Only available on error, can be either "MsgErro" or "FeedPlanErro"
     msg: Optional[str] = None
 
     @staticmethod
     def from_mqtt_payload(payload: dict) -> FeedingPlanServiceIn:
-        plans: [dict] = payload['plans']
-        plans_data: [FeedingPlanIn] = []
+        plans: list[dict] = payload['plans']
+        plans_data: list[FeedingPlanIn] = []
         msg: str = None
 
         for plan in plans:
@@ -1275,10 +1275,10 @@ class FeedingPlanOut:
 class FeedingPlanServiceOut:
     message_id: MessageId
     timestamp: Timestamp
-    plans: [FeedingPlanOut]
+    plans: list[FeedingPlanOut]
 
     @staticmethod
-    def create(plans: [FeedingPlanOut]) -> FeedingPlanServiceOut:
+    def create(plans: list[FeedingPlanOut]) -> FeedingPlanServiceOut:
         return FeedingPlanServiceOut(
             message_id = MessageId.generate(),
             timestamp = Timestamp.now(),
@@ -1286,7 +1286,7 @@ class FeedingPlanServiceOut:
         )
 
     def to_mqtt_payload(self) -> dict:
-        plans: [dict] = []
+        plans: list[dict] = []
 
         for plan in self.plans:
             plan_payload = {
@@ -1337,10 +1337,10 @@ class GetFeedingPlanEventOut:
     message_id: MessageId
     timestamp: Timestamp
     code: Code
-    plans: [GetFeedingPlanOut]
+    plans: list[GetFeedingPlanOut]
 
     @staticmethod
-    def create(code: Code, plans: [GetFeedingPlanOut]) -> GetFeedingPlanEventOut:
+    def create(code: Code, plans: list[GetFeedingPlanOut]) -> GetFeedingPlanEventOut:
         return GetFeedingPlanEventOut(
             message_id = MessageId.generate(),
             timestamp = Timestamp.now(),
@@ -1349,7 +1349,7 @@ class GetFeedingPlanEventOut:
         )
 
     def to_mqtt_payload(self) -> dict:
-        plans: [dict] = []
+        plans: list[dict] = []
 
         for plan in self.plans:
             if plan.skip_end_time == None:

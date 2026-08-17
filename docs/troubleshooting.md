@@ -134,7 +134,7 @@ authentication failures are reported by type without exposing the token.
 If `/health` reports `state_decode.ok: false`, do not bypass the check. Confirm
 `/user/data/attr/state.bin` is readable and exactly 236 bytes. If `/v1/core`
 lacks fields such as `sound_switch`, `setting_classes`, or the full 47-byte plan
-metadata, upgrade the feeder to the tracked State Agent 0.2.0 build. The
+metadata, upgrade the feeder to the tracked State Agent 0.3.0 build. The
 controller intentionally blocks persistent writes rather than using an older,
 ambiguous decoder.
 

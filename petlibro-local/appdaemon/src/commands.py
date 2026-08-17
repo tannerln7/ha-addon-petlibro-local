@@ -4,18 +4,19 @@ from __future__ import annotations
 
 import json
 
-import appdaemon.plugins.mqtt.mqttapi as mqttapi
-
+from appdaemon.plugins.mqtt import mqttapi
 from backend import Backend
 from feed_plans import PlanSlotMismatch, parse_plan_patch
 from ha_entities import HomeAssistantStatePublisher
 from settings_map import SETTING_COMMANDS, SettingCommandSpec
+from state_agent_updates import StateAgentUpdateCoordinator
 from state_coordinator import (
     FeederStateCoordinator,
     PersistentWriteRequest,
     SettingEqualsPredicate,
 )
 from storage import Storage
+
 
 class CommandRouter:
     """Translate user-originated HA commands into actions or verified writes."""
@@ -29,6 +30,7 @@ class CommandRouter:
         storage: Storage,
         state: HomeAssistantStatePublisher,
         logger,
+        updater: StateAgentUpdateCoordinator | None = None,
         raw_settings_diagnostics: bool = False,
     ):
         self.mqtt = mqtt
@@ -38,6 +40,7 @@ class CommandRouter:
         self.storage = storage
         self.state = state
         self.logger = logger
+        self.updater = updater
         self.raw_settings_diagnostics = raw_settings_diagnostics
 
     def start(self) -> None:
@@ -49,9 +52,17 @@ class CommandRouter:
         self._subscribe("food/cmd/manual_feed_grain_num", self._manual_feed_amount)
         self._subscribe("food/cmd/manual_feed", self._manual_feed)
         self._subscribe("device/cmd/reboot", lambda *_: self.backend.device_reboot())
-        self._subscribe("device/cmd/factory_reset", lambda *_: self.backend.device_factory_reset())
-        self._subscribe("device/cmd/wifi_reconnect", lambda *_: self.backend.device_wifi_reconnect())
-        self._subscribe("device/cmd/sd_card_format", lambda *_: self.backend.device_sd_card_format())
+        self._subscribe(
+            "device/cmd/factory_reset", lambda *_: self.backend.device_factory_reset()
+        )
+        self._subscribe(
+            "device/cmd/wifi_reconnect", lambda *_: self.backend.device_wifi_reconnect()
+        )
+        self._subscribe(
+            "device/cmd/sd_card_format", lambda *_: self.backend.device_sd_card_format()
+        )
+        self._subscribe("state_agent/cmd/install", self._state_agent_install)
+        self._subscribe("state_agent/cmd/check_updates", self._state_agent_check)
 
     def restore_local_preferences(self) -> None:
         self.state.publish(
@@ -148,7 +159,9 @@ class CommandRouter:
                 )
             )
 
-        callback.__name__ = "_mqtt_cmd_" + spec.topic.replace("/cmd/", "_").replace("/", "_") + "_cb"
+        callback.__name__ = (
+            "_mqtt_cmd_" + spec.topic.replace("/cmd/", "_").replace("/", "_") + "_cb"
+        )
         return callback
 
     def _unsupported(self, control: str):
@@ -172,9 +185,23 @@ class CommandRouter:
         self.state.publish("food/manual_feed_grain_num", amount)
 
     def _manual_feed(self, *_args):
-        self.backend.food_manual_feed_now(
-            self.storage.food_manual_feed_grain_num_get()
-        )
+        self.backend.food_manual_feed_now(self.storage.food_manual_feed_grain_num_get())
+
+    def _state_agent_install(self, *_args):
+        if self.updater is None:
+            self.logger.warning(
+                "state-agent install ignored because updater is unavailable"
+            )
+            return
+        self.updater.request_install()
+
+    def _state_agent_check(self, *_args):
+        if self.updater is None:
+            self.logger.warning(
+                "state-agent update check ignored because updater is unavailable"
+            )
+            return
+        self.updater.request_check(force=True, reason="manual")
 
     def _subscribe(self, relative_topic: str, callback) -> None:
         topic = self.state.topic(relative_topic)

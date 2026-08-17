@@ -94,10 +94,17 @@ persistent setting and schedule writes rather than replaying stale Home
 Assistant state.
 
 The feeder-resident State Agent is maintained as a first-class component in
-[`feeder-state-agent`](feeder-state-agent/). State Agent 0.2.0 replaces the
+[`feeder-state-agent`](feeder-state-agent/). State Agent 0.3.0 replaces the
 older observational field map with the audited 236-byte state layout, exact
 47-byte plan records, and 51-slot pending feed-event queue. An older agent will
 not provide the fields required for safe persistent verification.
+
+State Agent updates are optional and require an initial manual bootstrap on the
+feeder. Once the agent and its runit supervisor are installed, the add-on can
+check a configured signed HTTPS release, expose a Home Assistant firmware
+Update entity, and upload a verified artifact to the feeder. The feeder never
+downloads release files itself. See [configuration](docs/configuration.md#state-agent-updates)
+and the [State Agent bootstrap and release guide](feeder-state-agent/README.md#bootstrap-and-signed-updates).
 
 `mqtt_host` is only the address used by AppDaemon inside the add-on. It is not
 written to the feeder. Feeder endpoint persistence is disabled by default so a
@@ -143,11 +150,11 @@ reproduction because it includes high-volume MQTT and camera packet details.
 
 With the default configuration and host networking:
 
-| Service | URL or port |
-|---|---|
-| go2rtc web/API | `http://HOME_ASSISTANT_HOST:1984/` |
-| RTSP | `rtsp://HOME_ASSISTANT_HOST:8554/petlibro_plaf203_<serial>` |
-| WebRTC transport | TCP and UDP `8555` |
+| Service          | URL or port                                                 |
+| ---------------- | ----------------------------------------------------------- |
+| go2rtc web/API   | `http://HOME_ASSISTANT_HOST:1984/`                          |
+| RTSP             | `rtsp://HOME_ASSISTANT_HOST:8554/petlibro_plaf203_<serial>` |
+| WebRTC transport | TCP and UDP `8555`                                          |
 
 The generated camera source is equivalent to:
 
@@ -187,6 +194,10 @@ tree; `GO_BUILD_PROCS` defaults to `2` to reduce compiler pressure. See the
   use a trusted VLAN and firewall access appropriately.
 - The feeder's MQTT transport is plaintext on tested firmware. Keep feeder and
   broker traffic on a trusted or isolated network.
+- State Agent OTA accepts only a detached Ed25519 signature over the exact
+  release manifest bytes, a matching SHA-256 artifact, and a newer supported
+  ARMv7 binary. Existing bearer-token and source-IP controls still protect the
+  feeder API; OTA does not add a second token.
 - Debug dumps contain decrypted protocol traffic. Enable them only while
   diagnosing a problem and delete them afterward.
 

@@ -123,6 +123,81 @@ intentionally stop the motor for roughly 950 ms during an active dual-bowl
 transition, so a stopped pin sample does not prove that the feed state machine
 is idle.
 
+### State Agent OTA boundary
+
+Optional State Agent OTA is intentionally separate from feeder-truth
+reconciliation. AppDaemon downloads `latest.json`, `latest.json.sig`, and, only
+for an explicit install request, the artifact over HTTPS. It verifies the
+64-byte detached Ed25519 signature over the exact raw manifest bytes before
+strictly parsing the manifest and checking the artifact's SHA-256 and size. The
+repository's sole trust-anchor source is
+`feeder-state-agent/release-public-key.hex`; the add-on image packages that
+public key for the verifier and the feeder binary embeds it at build time.
+That file names the candidate embedded trust anchor for the next State Agent
+build, while the private signer that authorizes the current candidate is
+separate.
+
+Normal releases use matching signer and candidate keys and omit
+`--rotate-trust-anchor`. Rotation releases deliberately pair candidate B in
+`release-public-key.hex` with private A and pass `--rotate-trust-anchor` so the
+current signer authorizes the transition candidate, and that candidate
+independently embeds the next trust anchor. The tooling
+reports SHA-256 fingerprints for the signer-derived public key and candidate
+trust anchor; normal mode requires equality, rotation mode requires inequality,
+and signature self-verification always uses the signer-derived public key.
+
+The upload is a binary `PLAFOTA1` frame with three big-endian 32-bit lengths for
+the raw manifest, 64-byte signature, and artifact. The authenticated feeder API
+validates the signature first, then the exact schema, a strictly newer SemVer
+version, artifact hash, size, and ARMv7 ELF shape. It stages only fixed paths
+below `/user/data/local-state-agent/update`; neither release URLs nor commands
+cross the AppDaemon-to-feeder boundary.
+
+The manifest schema remains unchanged across trust-anchor rotation and carries
+no replacement trust key. The next trust anchor stays compiled into the State
+Agent executable, not supplied by the manifest or any online keyring.
+
+The separate runit update supervisor owns service stop, atomic binary swap,
+restart, version/health probation, and one rolling backup rollback. State Agent
+staging and supervisor activation share the kernel advisory lock at
+`/user/data/local-state-agent/update/transaction.lock`; conflicts return HTTP
+409 instead of overwriting a live transaction.
+
+Durable phases are `pending`, `activating`, `candidate_active`,
+`probation_confirmed`, `rollback_in_progress`, and terminal `idle`,
+`rolled_back`, or `failed`. The fixed-path `plaf203-update-fs` helper performs
+same-directory temp writes/copies, file fsync, atomic rename, directory fsync,
+and durable cleanup. A reboot from `candidate_active` restores only a validated
+ARM ELF backup; `probation_confirmed` completes success; and
+`rollback_in_progress` resumes rollback without retrying the failed candidate.
+The existing State Agent bearer token and source-IP ACL
+protect all update routes; there is no additional update token. The Home
+Assistant Update entity and diagnostic check button are MQTT projections of
+this subsystem. They neither participate in `FeederStateCoordinator` nor turn
+MQTT delivery acknowledgement into durable feeder truth. During probation the
+controller polls only the local feeder status, not the Internet release source.
+
+For a single-key A→B rotation, the operational sequence is: A deployed State
+Agent trusts A; B deployed AppDaemon trusts A; build a transition State Agent
+with `release-public-key.hex=B`; sign the transition manifest with private A
+plus `--rotate-trust-anchor`; existing AppDaemon A verifies; existing State
+Agent A verifies; the candidate installs and now trusts B; confirm successful
+probation and rollback no longer pending; update AppDaemon/package trust anchor
+to B; future releases are signed by B normally. If a feeder misses the A→B
+hand-off before AppDaemon moves to B, the recovery path is to temporarily run
+an AppDaemon/release workflow that still trusts A or recover the feeder over
+manual SSH before retrying.
+
+Publication remains immutable artifact first, signed manifest second, with no
+remotely supplied trust anchor and no online keyring.
+
+Signed artifact/release URLs are HTTPS-only and reject credentials/fragments;
+immutable artifact URLs also reject queries and require a concrete path.
+Release metadata and artifact downloads reject redirects. Both Python and C
+apply SemVer 2.0.0 precedence, ignoring build metadata. Accepted
+State Agent sockets use a 30-second inactivity timeout while retaining
+single-threaded request handling.
+
 Feeding plans have no second cache in `Backend` or AppDaemon storage. Every
 edit starts with a fresh core preflight and is sent as a full collection. The
 target plan changes only in time, weekdays, portions, derived one-shot state,
@@ -138,19 +213,19 @@ must never be presented as durable feeding history.
 
 The AppDaemon implementation follows the same boundaries in code:
 
-| Module | Responsibility |
-|---|---|
-| `plaf203.py` | Application lifecycle and component wiring |
-| `state_agent.py` | Authenticated, read-only HTTP models and client |
-| `state_coordinator.py` | Truth, revisions, serialized writes, verification, and divergence |
-| `mqtt_client.py` / `protocol.py` | Feeder MQTT transport and wire schemas |
-| `backend.py` | Protocol lifecycle, commands, acknowledgements, and telemetry callbacks |
-| `settings_map.py` / `commands.py` | Declarative HA/semantic/wire mappings and user command routing |
-| `feed_plans.py` | Plan parsing, typed protocol serialization, and display projection |
-| `ha_entities.py` / `telemetry.py` | MQTT discovery, verified-state mirroring, and operational telemetry |
-| `dispensing_status.py` | Fresh dispensing runtime state, ordering, and dedicated availability |
-| `storage.py` | Local manual-feed preference and stale diagnostics, never feeder truth |
-| `feeder-state-agent/` | Strict binary decoder and feeder-resident read-only API |
+| Module                            | Responsibility                                                          |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| `plaf203.py`                      | Application lifecycle and component wiring                              |
+| `state_agent.py`                  | Authenticated, read-only HTTP models and client                         |
+| `state_coordinator.py`            | Truth, revisions, serialized writes, verification, and divergence       |
+| `mqtt_client.py` / `protocol.py`  | Feeder MQTT transport and wire schemas                                  |
+| `backend.py`                      | Protocol lifecycle, commands, acknowledgements, and telemetry callbacks |
+| `settings_map.py` / `commands.py` | Declarative HA/semantic/wire mappings and user command routing          |
+| `feed_plans.py`                   | Plan parsing, typed protocol serialization, and display projection      |
+| `ha_entities.py` / `telemetry.py` | MQTT discovery, verified-state mirroring, and operational telemetry     |
+| `dispensing_status.py`            | Fresh dispensing runtime state, ordering, and dedicated availability    |
+| `storage.py`                      | Local manual-feed preference and stale diagnostics, never feeder truth  |
+| `feeder-state-agent/`             | Strict binary decoder and feeder-resident read-only API                 |
 
 ### Discovery coordinator
 

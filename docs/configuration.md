@@ -5,60 +5,61 @@ users configure the same values in the ignored `docker/.env` file.
 
 ## Option mapping
 
-| Home Assistant option | Docker variable | Consumer |
-|---|---|---|
-| `mqtt_host` | `MQTT_HOST` | AppDaemon MQTT plugin only |
-| `mqtt_port` | `MQTT_PORT` | AppDaemon MQTT plugin only |
-| `mqtt_username` | `MQTT_USERNAME` | AppDaemon MQTT plugin |
-| `mqtt_password` | `MQTT_PASSWORD` | AppDaemon MQTT plugin secrets file |
-| `mqtt_client_id` | `MQTT_CLIENT_ID` | Unique AppDaemon broker client ID |
-| `persist_feeder_mqtt` | `PERSIST_FEEDER_MQTT` | Explicit feeder endpoint persistence gate |
-| `feeder_mqtt_host` | `FEEDER_MQTT_HOST` | Broker address sent to the physical feeder only |
-| `feeder_mqtt_port` | `FEEDER_MQTT_PORT` | Broker port sent to the physical feeder only |
-| `feeder_https_addr` | `FEEDER_HTTPS_ADDR` | Optional HTTPS value in an explicit endpoint update |
-| `petlibro_state_agent_url` | `PETLIBRO_STATE_AGENT_URL` | Optional feeder truth API URL or `{ip}` template |
-| `petlibro_state_agent_token` | `PETLIBRO_STATE_AGENT_TOKEN` | Bearer token for the feeder truth API |
-| `petlibro_state_agent_timeout_seconds` | `PETLIBRO_STATE_AGENT_TIMEOUT_SECONDS` | Per-request state API timeout |
-| `device_discovery` | `DEVICE_DISCOVERY` | MQTT identity discovery coordinator |
-| `product_filter` | `PRODUCT_FILTER` | Accepted feeder topic product |
-| `lan_cidr` | `LAN_CIDR` | UID-specific LAN_SEARCH3/KNOCK2 camera-address search network |
-| `ip_resolve_timeout_seconds` | `IP_RESOLVE_TIMEOUT_SECONDS` | Per-search timeout |
-| `ip_discovery_broadcast_seconds` | `IP_DISCOVERY_BROADCAST_SECONDS` | Broadcast-first stage duration |
-| `ip_discovery_max_unicast_per_second` | `IP_DISCOVERY_MAX_UNICAST_PER_SECOND` | Paced subnet fallback rate |
-| `ip_refresh_interval_minutes` | `IP_REFRESH_INTERVAL_MINUTES` | Healthy address refresh age |
-| `ip_retry_backoff_seconds` | `IP_RETRY_BACKOFF_SECONDS` | Failed-search retry floor |
-| `devices` | `DEVICES_JSON` | Optional manual device override array |
-| `go2rtc_stream_name` | `GO2RTC_STREAM_NAME` | go2rtc stream and RTSP URL |
-| `camera_quality` | `CAMERA_QUALITY` | Petlibro URL `quality` query |
-| `ack_mode` | `ACK_MODE` | Petlibro URL `ack` query |
-| `send_delay_ctrl` | `SEND_DELAY_CTRL` | Petlibro URL data-delay option |
-| `hd_probe_wait_ms` | `HD_PROBE_WAIT_MS` | Petlibro HD SPS stabilization |
-| `go2rtc_api_port` | `GO2RTC_API_PORT` | go2rtc API listener |
-| `go2rtc_rtsp_port` | `GO2RTC_RTSP_PORT` | go2rtc RTSP listener |
-| `go2rtc_webrtc_port` | `GO2RTC_WEBRTC_PORT` | go2rtc WebRTC listener |
-| `publish_camera_metadata` | `PUBLISH_CAMERA_METADATA` | go2rtc status export and AppDaemon MQTT publisher |
-| `camera_metadata_topic_prefix` | `CAMERA_METADATA_TOPIC_PREFIX` | Optional MQTT camera topic override |
-| `camera_metadata_interval_seconds` | `CAMERA_METADATA_INTERVAL_SECONDS` | Retained state/availability heartbeat and staleness basis |
-| `log_level` | `LOG_LEVEL` | Petlibro application logging threshold |
-| `verbose_logs` | `VERBOSE_LOGS` | Deprecated compatibility switch |
-| `enable_debug_dumps` | `ENABLE_DEBUG_DUMPS` | Decrypted protocol dump output |
+| Home Assistant option                  | Docker variable                        | Consumer                                                      |
+| -------------------------------------- | -------------------------------------- | ------------------------------------------------------------- |
+| `mqtt_host`                            | `MQTT_HOST`                            | AppDaemon MQTT plugin only                                    |
+| `mqtt_port`                            | `MQTT_PORT`                            | AppDaemon MQTT plugin only                                    |
+| `mqtt_username`                        | `MQTT_USERNAME`                        | AppDaemon MQTT plugin                                         |
+| `mqtt_password`                        | `MQTT_PASSWORD`                        | AppDaemon MQTT plugin secrets file                            |
+| `mqtt_client_id`                       | `MQTT_CLIENT_ID`                       | Unique AppDaemon broker client ID                             |
+| `persist_feeder_mqtt`                  | `PERSIST_FEEDER_MQTT`                  | Explicit feeder endpoint persistence gate                     |
+| `feeder_mqtt_host`                     | `FEEDER_MQTT_HOST`                     | Broker address sent to the physical feeder only               |
+| `feeder_mqtt_port`                     | `FEEDER_MQTT_PORT`                     | Broker port sent to the physical feeder only                  |
+| `feeder_https_addr`                    | `FEEDER_HTTPS_ADDR`                    | Optional HTTPS value in an explicit endpoint update           |
+| `petlibro_state_agent_url`             | `PETLIBRO_STATE_AGENT_URL`             | Optional feeder truth API URL or `{ip}` template              |
+| `petlibro_state_agent_token`           | `PETLIBRO_STATE_AGENT_TOKEN`           | Bearer token for the feeder truth API                         |
+| `petlibro_state_agent_timeout_seconds` | `PETLIBRO_STATE_AGENT_TIMEOUT_SECONDS` | Per-request state API timeout                                 |
+| `state_agent_updates`                  | `STATE_AGENT_UPDATES_JSON`             | Optional signed State Agent release configuration object      |
+| `device_discovery`                     | `DEVICE_DISCOVERY`                     | MQTT identity discovery coordinator                           |
+| `product_filter`                       | `PRODUCT_FILTER`                       | Accepted feeder topic product                                 |
+| `lan_cidr`                             | `LAN_CIDR`                             | UID-specific LAN_SEARCH3/KNOCK2 camera-address search network |
+| `ip_resolve_timeout_seconds`           | `IP_RESOLVE_TIMEOUT_SECONDS`           | Per-search timeout                                            |
+| `ip_discovery_broadcast_seconds`       | `IP_DISCOVERY_BROADCAST_SECONDS`       | Broadcast-first stage duration                                |
+| `ip_discovery_max_unicast_per_second`  | `IP_DISCOVERY_MAX_UNICAST_PER_SECOND`  | Paced subnet fallback rate                                    |
+| `ip_refresh_interval_minutes`          | `IP_REFRESH_INTERVAL_MINUTES`          | Healthy address refresh age                                   |
+| `ip_retry_backoff_seconds`             | `IP_RETRY_BACKOFF_SECONDS`             | Failed-search retry floor                                     |
+| `devices`                              | `DEVICES_JSON`                         | Optional manual device override array                         |
+| `go2rtc_stream_name`                   | `GO2RTC_STREAM_NAME`                   | go2rtc stream and RTSP URL                                    |
+| `camera_quality`                       | `CAMERA_QUALITY`                       | Petlibro URL `quality` query                                  |
+| `ack_mode`                             | `ACK_MODE`                             | Petlibro URL `ack` query                                      |
+| `send_delay_ctrl`                      | `SEND_DELAY_CTRL`                      | Petlibro URL data-delay option                                |
+| `hd_probe_wait_ms`                     | `HD_PROBE_WAIT_MS`                     | Petlibro HD SPS stabilization                                 |
+| `go2rtc_api_port`                      | `GO2RTC_API_PORT`                      | go2rtc API listener                                           |
+| `go2rtc_rtsp_port`                     | `GO2RTC_RTSP_PORT`                     | go2rtc RTSP listener                                          |
+| `go2rtc_webrtc_port`                   | `GO2RTC_WEBRTC_PORT`                   | go2rtc WebRTC listener                                        |
+| `publish_camera_metadata`              | `PUBLISH_CAMERA_METADATA`              | go2rtc status export and AppDaemon MQTT publisher             |
+| `camera_metadata_topic_prefix`         | `CAMERA_METADATA_TOPIC_PREFIX`         | Optional MQTT camera topic override                           |
+| `camera_metadata_interval_seconds`     | `CAMERA_METADATA_INTERVAL_SECONDS`     | Retained state/availability heartbeat and staleness basis     |
+| `log_level`                            | `LOG_LEVEL`                            | Petlibro application logging threshold                        |
+| `verbose_logs`                         | `VERBOSE_LOGS`                         | Deprecated compatibility switch                               |
+| `enable_debug_dumps`                   | `ENABLE_DEBUG_DUMPS`                   | Decrypted protocol dump output                                |
 
 See [the add-on option guide](../petlibro-local/DOCS.md) for defaults and
 behavior.
 
 ## Generated files
 
-| Path | Contents |
-|---|---|
-| `/data/go2rtc.yaml` | Listener configuration and generated Petlibro stream URL |
-| `/data/appdaemon.yaml` | AppDaemon core, namespace, and MQTT plugin configuration |
-| `/data/apps.yaml` | Discovery coordinator and one PLAF203 app per device |
-| `/data/appdaemon-secrets.yaml` | MQTT credentials and feeder state-agent bearer token |
-| `/data/devices.json` | Atomic mode-0600 device identity/address registry |
-| `/data/appdaemon/` | AppDaemon app links and persistent namespace state |
+| Path                                         | Contents                                                  |
+| -------------------------------------------- | --------------------------------------------------------- |
+| `/data/go2rtc.yaml`                          | Listener configuration and generated Petlibro stream URL  |
+| `/data/appdaemon.yaml`                       | AppDaemon core, namespace, and MQTT plugin configuration  |
+| `/data/apps.yaml`                            | Discovery coordinator and one PLAF203 app per device      |
+| `/data/appdaemon-secrets.yaml`               | MQTT credentials and feeder state-agent bearer token      |
+| `/data/devices.json`                         | Atomic mode-0600 device identity/address registry         |
+| `/data/appdaemon/`                           | AppDaemon app links and persistent namespace state        |
 | `/data/petlibro_camera_status_<stream>.json` | Per-stream atomic go2rtc camera runtime status; mode 0600 |
-| `/data/petlibro_c2d_<stream>.dat` | Optional decrypted client-to-device dump |
-| `/data/petlibro_d2c_<stream>.dat` | Optional decrypted device-to-client dump |
+| `/data/petlibro_c2d_<stream>.dat`            | Optional decrypted client-to-device dump                  |
+| `/data/petlibro_d2c_<stream>.dat`            | Optional decrypted device-to-client dump                  |
 
 Generated YAML and secrets files are written with mode 0600. Do not copy them
 into Git or attach them to public issues.
@@ -83,11 +84,42 @@ agent. The renderer places it in the mode-0600 AppDaemon secrets file and
 references it with `!secret`; application logs never include it. The default
 request timeout is two seconds.
 
-The backend requires the tracked State Agent 0.2.0 schema. That agent rejects
+The backend requires the tracked State Agent 0.3.0 schema. That agent rejects
 any `state.bin` whose length is not exactly 236 bytes and labels decoded fields
 as `persistent`, `effective_cached`, or `runtime`. Only persistent fields can
 complete a setting verification; firmware-calculated cached enable flags and
 runtime telemetry cannot.
+
+### State Agent updates
+
+`state_agent_updates` is disabled by default. Enable it only after manually
+bootstrapping a compatible State Agent and its runit update supervisor on the
+feeder; the add-on cannot install that initial feeder-side service. The object
+has these fields:
+
+```yaml
+state_agent_updates:
+  enabled: true
+  manifest_url: https://updates.example.invalid/plaf203/latest.json
+  check_on_connect: true
+  check_interval_hours: 24
+```
+
+`manifest_url` is required when enabled and must be HTTPS without credentials,
+query parameters, or a fragment. `check_interval_hours` is an integer from 1
+through 168. `check_on_connect` permits a throttled check after a usable feeder
+connection or Home Assistant birth. The Home Assistant MQTT discovery surface
+adds a firmware Update entity and a separate diagnostic **Check for State Agent
+Updates** button. Install and check commands ignore retained MQTT messages.
+
+The add-on verifies a detached Ed25519 signature over the exact `latest.json`
+bytes before parsing it, then verifies the downloaded artifact hash and size.
+The manifest must identify `plaf203-state-agent`, stable channel, API versions
+1, `linux-armv7-eabihf`, and a strictly valid SemVer version. The artifact and
+release URLs must both use HTTPS. The feeder receives only the already verified
+binary frame and never accesses the release URL. While a submitted update is in
+progress, the controller queries only `/v1/update-status` and `/v1/version` on
+the local feeder.
 
 On a feeder startup event or first heartbeat, the controller reads `/v1/core`
 before accepting a persistent write. It then mirrors feeder settings and

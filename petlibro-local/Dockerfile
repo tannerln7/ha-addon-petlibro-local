@@ -4,9 +4,9 @@ FROM golang:${GO_VERSION}-alpine3.23 AS go2rtc-builder
 ARG GO_BUILD_PROCS=""
 
 WORKDIR /src/go2rtc
-COPY go2rtc/go.mod go2rtc/go.sum ./
+COPY petlibro-local/go2rtc/go.mod petlibro-local/go2rtc/go.sum ./
 RUN go mod download
-COPY go2rtc/ ./
+COPY petlibro-local/go2rtc/ ./
 RUN set -eu; \
     set --; \
     if [ -n "${GO_BUILD_PROCS}" ]; then \
@@ -25,15 +25,16 @@ ARG BUILD_VERSION=dev
 
 RUN apk add --no-cache ffmpeg jq \
     && python -m venv /opt/appdaemon-venv \
-    && /opt/appdaemon-venv/bin/pip install --no-cache-dir "AppDaemon>=4.5,<5"
+    && /opt/appdaemon-venv/bin/pip install --no-cache-dir "AppDaemon>=4.5,<5" "cryptography>=45,<47"
 
 COPY --from=go2rtc-builder /out/go2rtc /usr/local/bin/go2rtc
 COPY --from=go2rtc-builder /out/petlibro-resolve /usr/local/bin/petlibro-resolve
-COPY appdaemon/src/ /opt/petlibro-local/appdaemon/
-COPY templates/ /opt/petlibro-local/templates/
-COPY render_config.py /usr/local/bin/petlibro-render-config
-COPY run.sh /usr/local/bin/petlibro-local-run
-COPY rootfs/ /
+COPY petlibro-local/appdaemon/src/ /opt/petlibro-local/appdaemon/
+COPY feeder-state-agent/release-public-key.hex /opt/petlibro-local/release-public-key.hex
+COPY petlibro-local/templates/ /opt/petlibro-local/templates/
+COPY petlibro-local/render_config.py /usr/local/bin/petlibro-render-config
+COPY petlibro-local/run.sh /usr/local/bin/petlibro-local-run
+COPY petlibro-local/rootfs/ /
 
 RUN chmod 0755 \
         /usr/local/bin/go2rtc \

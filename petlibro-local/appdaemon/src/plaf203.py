@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import datetime
 
-import appdaemon.adapi as adapi
-import appdaemon.adbase as adbase
-import appdaemon.plugins.mqtt.mqttapi as mqttapi
-
+from appdaemon import adapi, adbase
+from appdaemon.plugins.mqtt import mqttapi
 from backend import Backend
 from camera_metadata import CameraMetadataPublisher
 from commands import CommandRouter
@@ -22,6 +20,7 @@ from state_agent import (
     StateAgentClient,
     UnavailableStateAgentClient,
 )
+from state_agent_updates import StateAgentUpdateCoordinator, StateAgentUpdateOptions
 from state_coordinator import (
     FeederStateCoordinator,
     PersistentWriteRequest,
@@ -51,9 +50,7 @@ class Plaf203(adbase.ADBase):
         self.storage = Storage(self.ad, "plaf203", self.serial_number)
         self.storage.initialize()
 
-        state_agent_url = str(
-            self.args.get("petlibro_state_agent_url", "")
-        ).strip()
+        state_agent_url = str(self.args.get("petlibro_state_agent_url", "")).strip()
         if state_agent_url:
             state_agent = StateAgentClient(
                 state_agent_url,
@@ -76,6 +73,17 @@ class Plaf203(adbase.ADBase):
             self._coordinator_availability_set,
             self.storage.verified_truth_set,
         )
+        update_options = StateAgentUpdateOptions.from_mapping(
+            self.args.get("state_agent_updates")
+        )
+        self.updater = StateAgentUpdateCoordinator(
+            self.ad,
+            self.state,
+            state_agent,
+            PetlibroLogger(self.ad, "petlibro.updates", log_level),
+            update_options,
+        )
+        self.updater.start()
         self.backend = Backend()
         self.backend.initialize(
             self.ad, self.mqtt, self.serial_number, log_level=log_level
@@ -85,9 +93,7 @@ class Plaf203(adbase.ADBase):
         self.telemetry.register(self.backend)
         self._register_backend_listeners()
 
-        self.discovery = HomeAssistantDiscoveryMqtt(
-            self.mqtt, self.serial_number
-        )
+        self.discovery = HomeAssistantDiscoveryMqtt(self.mqtt, self.serial_number)
         self.discovery.discovery_issue()
         self.mqtt.listen_event(
             self._home_assistant_status_cb,
@@ -108,6 +114,7 @@ class Plaf203(adbase.ADBase):
             self.storage,
             self.state,
             self.logger,
+            updater=self.updater,
             raw_settings_diagnostics=self.logger.enabled("debug"),
         )
         self.commands.restore_local_preferences()
@@ -121,9 +128,7 @@ class Plaf203(adbase.ADBase):
             serial=self.serial_number,
             stream_name=self.args.get("go2rtc_stream_name", "petlibro_feeder"),
             requested_quality=self.args.get("camera_quality", "hd"),
-            configured_hd_probe_wait_ms=int(
-                self.args.get("hd_probe_wait_ms", 15000)
-            ),
+            configured_hd_probe_wait_ms=int(self.args.get("hd_probe_wait_ms", 15000)),
             rtsp_port=int(self.args.get("go2rtc_rtsp_port", 8554)),
             status_file=self.args.get(
                 "camera_status_file", "/data/petlibro_camera_status.json"
@@ -144,6 +149,7 @@ class Plaf203(adbase.ADBase):
 
     def terminate(self) -> None:
         self.camera_metadata.stop()
+        self.updater.stop()
         self.coordinator.shutdown()
         self.storage.terminate()
         self.dispensing_status.on_feeder_disconnected()
@@ -175,9 +181,7 @@ class Plaf203(adbase.ADBase):
         self.feeder_https_addr = (
             str(self.args.get("feeder_https_addr", "")).strip() or None
         )
-        self.tutk_p2p_region = str(
-            self.args.get("tutk_p2p_region", "REGION_US")
-        )
+        self.tutk_p2p_region = str(self.args.get("tutk_p2p_region", "REGION_US"))
         self._feeder_mqtt_persistence_due = False
 
     def _register_backend_listeners(self) -> None:
@@ -209,6 +213,7 @@ class Plaf203(adbase.ADBase):
         self.state.publish("device/online", available)
         if not available:
             return
+        self.updater.on_usable_connection()
         self.state.publish("device/error_state", False)
         self.state.publish("device/error_message", "No error")
         if self.persist_feeder_mqtt and self._feeder_mqtt_persistence_due:
@@ -254,9 +259,7 @@ class Plaf203(adbase.ADBase):
 
     def _went_online(self) -> None:
         self.logger.info("device online", serial=self.serial_number)
-        self.dispensing_status.on_feeder_connected(
-            self.backend.connection_generation
-        )
+        self.dispensing_status.on_feeder_connected(self.backend.connection_generation)
         self.coordinator.on_feeder_connected()
 
     def _went_offline(self) -> None:
@@ -283,6 +286,9 @@ class Plaf203(adbase.ADBase):
         latest_truth = self.coordinator.latest_truth()
         if latest_truth is not None:
             self._apply_feeder_truth(latest_truth)
+        updater = getattr(self, "updater", None)
+        if updater is not None:
+            updater.on_home_assistant_birth()
         self.dispensing_status.mark_unavailable()
         self.backend.request_runtime_snapshot("Home Assistant birth")
 

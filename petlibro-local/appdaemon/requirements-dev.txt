@@ -1,2 +1,3 @@
 AppDaemon>=4.5,<5
+cryptography>=45,<47
 pytest>=8,<10

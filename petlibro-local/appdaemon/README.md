@@ -56,7 +56,7 @@ The feeder uses factory-provisioned MQTT credentials. Keep it on a trusted or
 isolated network, do not publish those credentials, and do not commit packet
 captures or AppDaemon configuration containing a real device serial.
 
-Use the matching State Agent 0.2.0 source under
+Use the matching State Agent 0.3.0 source under
 [`../../feeder-state-agent`](../../feeder-state-agent/). Older agent schemas do
 not expose the persistent/effective/runtime distinction needed for safe write
 verification.
