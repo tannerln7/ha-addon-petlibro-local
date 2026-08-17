@@ -1274,7 +1274,9 @@ static char *trim_inplace(char *s) {
 }
 
 static bool request_authorized(const HttpRequest *req, const char *client_ip) {
-  if (g_cfg.allow_ip[0] && strcmp(g_cfg.allow_ip, client_ip) != 0)
+  bool local_loopback = strcmp(client_ip, "127.0.0.1") == 0;
+  if (g_cfg.allow_ip[0] && !local_loopback &&
+      strcmp(g_cfg.allow_ip, client_ip) != 0)
     return false;
   if (!g_cfg.require_token)
     return true;

@@ -1,3 +1,4 @@
+import inspect
 import json
 import struct
 from pathlib import Path
@@ -192,7 +193,15 @@ class _FakeAD:
         self.executor_calls += 1
         value = func(*args)
         if callback is not None:
-            callback(result=value)
+            params = inspect.signature(callback).parameters.values()
+            has_expanded_kwargs = any(
+                param.kind is inspect.Parameter.VAR_KEYWORD
+                for param in params
+            )
+            if has_expanded_kwargs:
+                callback(result=value)
+            else:
+                callback({"result": value})
         return object()
 
     def run_in(self, callback, delay, **kwargs):
@@ -214,6 +223,9 @@ class _FakeStatePublisher:
 
 class _FakeLogger:
     def debug(self, *_args, **_kwargs):
+        return None
+
+    def info(self, *_args, **_kwargs):
         return None
 
     def warning(self, *_args, **_kwargs):

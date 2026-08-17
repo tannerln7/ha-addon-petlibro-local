@@ -321,6 +321,10 @@ class StateAgentUpdateCoordinator:
 
     def request_check(self, *, force: bool, reason: str) -> None:
         if not self.options.enabled:
+            self.logger.warning(
+                "state-agent update check ignored because updates are disabled",
+                reason=reason,
+            )
             return
         if self._busy:
             self.logger.debug(
@@ -334,13 +338,19 @@ class StateAgentUpdateCoordinator:
             self.logger.debug("state-agent update check throttled", reason=reason)
             return
 
+        self.logger.info(
+            "state-agent update check started",
+            reason=reason,
+            manifest_url=self.options.manifest_url,
+        )
+
         def worker() -> UpdateStateSnapshot:
             return self._check_for_updates(fetch_artifact=False)
 
         self._busy = True
         self.ad.submit_to_executor(
             worker,
-            callback=lambda result: self._on_check_finished(result=result),
+            callback=lambda result, **_kwargs: self._on_check_finished(result=result),
         )
 
     def request_install(self) -> None:
@@ -363,7 +373,7 @@ class StateAgentUpdateCoordinator:
 
         self.ad.submit_to_executor(
             worker,
-            callback=lambda result: self._on_install_finished(result=result),
+            callback=lambda result, **_kwargs: self._on_install_finished(result=result),
         )
 
     def _on_check_finished(self, *, result: object) -> None:
@@ -373,6 +383,19 @@ class StateAgentUpdateCoordinator:
             return
         self._latest_state = snapshot
         self._last_check_monotonic = time.monotonic()
+        self.logger.info(
+            "state-agent update check complete",
+            installed_version=snapshot.installed_version,
+            latest_version=snapshot.latest_version,
+            update_available=(
+                compare_semver(
+                    snapshot.latest_version,
+                    snapshot.installed_version,
+                ) > 0
+            ),
+            in_progress=snapshot.in_progress,
+            last_error=snapshot.last_error or "none",
+        )
         self._publish_state()
 
     def _on_install_finished(self, *, result: object) -> None:
@@ -428,7 +451,7 @@ class StateAgentUpdateCoordinator:
 
         self.ad.submit_to_executor(
             worker,
-            callback=lambda result: self._on_status_poll_finished(result=result),
+            callback=lambda result, **_kwargs: self._on_status_poll_finished(result=result),
         )
 
     def _on_status_poll_finished(self, *, result: object) -> None:

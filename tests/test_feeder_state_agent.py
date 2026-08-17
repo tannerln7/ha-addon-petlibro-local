@@ -301,7 +301,9 @@ def _write_snapshot(root, *, state=None, plans=(), feed=None, head=0, tail=0):
 
 
 class RunningAgent:
-    def __init__(self, binary, root, *, socket_timeout_seconds=None):
+    def __init__(
+        self, binary, root, *, allow_ip=None, socket_timeout_seconds=None
+    ):
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             self.port = sock.getsockname()[1]
@@ -315,6 +317,8 @@ class RunningAgent:
                 "--token",
                 TOKEN,
             ]
+        if allow_ip is not None:
+            args.extend(["--allow-ip", allow_ip])
         if socket_timeout_seconds is not None:
             args.extend(["--socket-timeout-seconds", str(socket_timeout_seconds)])
         self.process = subprocess.Popen(
@@ -585,6 +589,32 @@ def test_version_and_update_status_endpoints(
     assert status["reason"] == "none"
     assert status["candidate_version"] is None
     assert status["previous_version"] is None
+
+
+
+def test_authenticated_loopback_bypasses_remote_source_allowlist(
+    state_agent_binary, tmp_path
+):
+    _write_snapshot(tmp_path)
+
+    # The production service permits HA/AppDaemon as its remote source, while
+    # the feeder-local update supervisor must also be able to probe 127.0.0.1.
+    with RunningAgent(
+        state_agent_binary,
+        tmp_path,
+        allow_ip="192.0.2.10",
+    ) as agent:
+        assert agent.get("/health")["ok"] is True
+        assert agent.get("/v1/version")["ok"] is True
+
+        bad_token = request.Request(
+            agent.base_url + "/health",
+            headers={"Authorization": "Bearer definitely-wrong"},
+        )
+        with pytest.raises(error.HTTPError) as auth_error:
+            request.urlopen(bad_token, timeout=1)
+
+    assert auth_error.value.code == 401
 
 
 def test_routes_require_exact_path_and_raw_query_is_exact_match(
