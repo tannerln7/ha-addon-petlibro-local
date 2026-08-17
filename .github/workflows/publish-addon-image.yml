@@ -112,7 +112,7 @@ jobs:
           arch: ${{ matrix.arch }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           context: .
-          dockerfile: ./petlibro-local/Dockerfile
+          file: ./petlibro-local/Dockerfile
           image: ${{ matrix.image }}
           image-tags: |
             ${{ needs.prepare.outputs.version }}
