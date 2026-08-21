@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass, replace
 import enum
 import functools
 import time
 import uuid
-from typing import Callable, Protocol
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from typing import Protocol
 
+from protocol import Weekday
 from state_agent import (
     FeederPlan,
     FeederRevisions,
@@ -106,24 +108,59 @@ class PlanPatch:
             raise ValueError("plan portions are invalid")
 
 
+class PlanOperation(enum.Enum):
+    UPDATE = "update"
+    CREATE = "create"
+
+
 @dataclass(frozen=True)
 class PlanCollectionPredicate:
     baseline: tuple[FeederPlan, ...]
     expected: tuple[FeederPlan, ...]
     target_plan_id: int
+    operation: PlanOperation
 
     def __post_init__(self):
         baseline_by_id = {plan.id: plan for plan in self.baseline}
         expected_by_id = {plan.id: plan for plan in self.expected}
-        if (
-            len(baseline_by_id) != len(self.baseline)
-            or len(expected_by_id) != len(self.expected)
-            or set(baseline_by_id) != set(expected_by_id)
-            or self.target_plan_id not in baseline_by_id
+
+        if len(baseline_by_id) != len(self.baseline) or len(expected_by_id) != len(
+            self.expected
         ):
-            raise ValueError("feeding-plan verification collections do not align")
+            raise ValueError(
+                "feeding-plan verification collections contain duplicate IDs"
+            )
+
+        if self.operation is PlanOperation.UPDATE:
+            if (
+                set(baseline_by_id) != set(expected_by_id)
+                or self.target_plan_id not in baseline_by_id
+            ):
+                raise ValueError(
+                    "feeding-plan update verification collections do not align"
+                )
+
+        elif self.operation is PlanOperation.CREATE:
+            if self.target_plan_id in baseline_by_id:
+                raise ValueError("feeding-plan create target already exists")
+
+            if self.target_plan_id not in expected_by_id:
+                raise ValueError(
+                    "feeding-plan create target missing from expected collection"
+                )
+
+            if not set(baseline_by_id).issubset(expected_by_id):
+                raise ValueError("feeding-plan create removed an existing plan")
+
+        else:
+            raise ValueError(f"unsupported feeding-plan operation: {self.operation}")
+
         for plan_id, baseline_plan in baseline_by_id.items():
-            expected_plan = expected_by_id[plan_id]
+            expected_plan = expected_by_id.get(plan_id)
+
+            if expected_plan is None:
+                raise ValueError("existing feeding plan disappeared")
+
             if plan_id != self.target_plan_id:
                 if (
                     baseline_plan.stable_fingerprint()
@@ -131,9 +168,14 @@ class PlanCollectionPredicate:
                 ):
                     raise ValueError("non-target feeding plan was mutated")
                 continue
+
+            # CREATE has no previous target record to compare against.
+            if self.operation is PlanOperation.CREATE:
+                continue
+
+            # UPDATE: feeder-owned fields must survive unchanged.
             if (
-                baseline_plan.enable_audio_raw
-                != expected_plan.enable_audio_raw
+                baseline_plan.enable_audio_raw != expected_plan.enable_audio_raw
                 or baseline_plan.audio_times != expected_plan.audio_times
                 or baseline_plan.skip_end_time != expected_plan.skip_end_time
                 or baseline_plan.opaque_hex != expected_plan.opaque_hex
@@ -142,12 +184,16 @@ class PlanCollectionPredicate:
 
     def matches(self, truth: FeederTruth) -> bool:
         actual = truth.plans.semantic_records
+
         if truth.plans.count != len(self.expected) or len(actual) != len(self.expected):
             return False
+
         expected_by_id = {plan.id: plan for plan in self.expected}
         actual_by_id = {plan.id: plan for plan in actual}
+
         if set(expected_by_id) != set(actual_by_id):
             return False
+
         return all(
             actual_by_id[plan_id].stable_fingerprint()
             == expected_plan.stable_fingerprint()
@@ -311,9 +357,7 @@ class FeederStateCoordinator:
 
     def request_persistent_write(self, request: PersistentWriteRequest) -> bool:
         if self._applying_feeder_truth:
-            self.logger.debug(
-                "suppressed HA writeback event", control=request.control
-            )
+            self.logger.debug("suppressed HA writeback event", control=request.control)
             return False
         if not self.mqtt_connected or not self.state_api_healthy:
             self.logger.warning(
@@ -421,7 +465,9 @@ class FeederStateCoordinator:
         for index in range(len(self._queued_writes) - 1, -1, -1):
             if self._queued_writes[index].control == request.control:
                 self._queued_writes[index] = request
-                self.logger.debug("coalesced queued feeder write", control=request.control)
+                self.logger.debug(
+                    "coalesced queued feeder write", control=request.control
+                )
                 return True
         if len(self._queued_writes) >= self.MAX_QUEUED_WRITES:
             self.logger.warning(
@@ -447,10 +493,17 @@ class FeederStateCoordinator:
                 self._complete_failed_write(str(exc))
                 return
             pending.baseline_truth = truth
+            baseline_plans = truth.plans.semantic_records
+            operation = (
+                PlanOperation.UPDATE
+                if any(plan.id == request.plan_patch.plan_id for plan in baseline_plans)
+                else PlanOperation.CREATE
+            )
             pending.predicate = PlanCollectionPredicate(
                 baseline=truth.plans.semantic_records,
                 expected=expected_plans,
                 target_plan_id=request.plan_patch.plan_id,
+                operation=operation,
             )
             publisher_truth = replace(
                 truth,
@@ -466,9 +519,7 @@ class FeederStateCoordinator:
         try:
             receipt = request.publisher(publisher_truth)
         except Exception as exc:
-            self._complete_failed_write(
-                f"MQTT publisher failed ({type(exc).__name__})"
-            )
+            self._complete_failed_write(f"MQTT publisher failed ({type(exc).__name__})")
             return
         pending.receipt = receipt
         pending.stage = PendingStage.AWAITING_ACK
@@ -495,7 +546,9 @@ class FeederStateCoordinator:
         pending = self.pending_write
         if pending is None:
             return
-        delay = self.VERIFY_DELAYS_SECONDS[min(retry_index, len(self.VERIFY_DELAYS_SECONDS) - 1)]
+        delay = self.VERIFY_DELAYS_SECONDS[
+            min(retry_index, len(self.VERIFY_DELAYS_SECONDS) - 1)
+        ]
         self._verify_timer_handle = self.ad.run_in(
             self._verification_timer,
             delay,
@@ -704,7 +757,9 @@ class FeederStateCoordinator:
                 "persistent feeder state diverged",
                 control=pending.request.control,
                 expected=(predicate.expected_description() if predicate else None),
-                actual=(predicate.actual_description(actual_truth) if predicate else None),
+                actual=(
+                    predicate.actual_description(actual_truth) if predicate else None
+                ),
             )
             projection_ok = self._commit_verified_truth(actual_truth)
             self.pending_write = None
@@ -740,11 +795,13 @@ class FeederStateCoordinator:
         ).items():
             if not _numeric_or_none(before) or not _numeric_or_none(after):
                 continue
-            changes.append({
-                "field": field_name,
-                "before": before,
-                "after": after,
-            })
+            changes.append(
+                {
+                    "field": field_name,
+                    "before": before,
+                    "after": after,
+                }
+            )
         self.logger.debug(
             "persistent write raw settings diff",
             control=pending.request.control,
@@ -857,9 +914,7 @@ class FeederStateCoordinator:
         ):
             self._start_write(self._queued_writes.popleft())
 
-    def _finish_plan_snapshots(
-        self, plans: tuple[FeederPlan, ...] | None
-    ) -> None:
+    def _finish_plan_snapshots(self, plans: tuple[FeederPlan, ...] | None) -> None:
         callbacks = self._plan_snapshot_callbacks
         self._plan_snapshot_callbacks = []
         for callback in callbacks:
@@ -945,16 +1000,22 @@ def _numeric_or_none(value: object) -> bool:
 def build_patched_plan_collection(
     baseline: tuple[FeederPlan, ...], patch: PlanPatch
 ) -> tuple[FeederPlan, ...]:
-    if not baseline:
-        raise ValueError("feeder has no stored feeding plans")
     validate_plan_transport_fields(baseline)
+
     if not any(plan.id == patch.plan_id for plan in baseline):
-        raise ValueError("feeding-plan addition is not supported")
+        return tuple(
+            sorted(
+                (*baseline, create_plan_from_patch(patch)),
+                key=lambda plan: plan.id,
+            )
+        )
+
     expected = []
     for plan in baseline:
         if plan.id != patch.plan_id:
             expected.append(plan)
             continue
+
         expected.append(
             replace(
                 plan,
@@ -968,10 +1029,36 @@ def build_patched_plan_collection(
                 # syncTime is the firmware's per-plan update marker. Regenerate
                 # it only for the target record; verification deliberately
                 # excludes it from schedule equality.
-                sync_time=max(plan.sync_time + 1, int(time.time() * 1000)),
+                sync_time=max(
+                    plan.sync_time + 1,
+                    int(time.time() * 1000),
+                ),
             )
         )
+
     return tuple(expected)
+
+
+def create_plan_from_patch(patch: PlanPatch) -> FeederPlan:
+    return FeederPlan(
+        id=patch.plan_id,
+        hour_utc=patch.hour_utc,
+        minute=patch.minute,
+        one_shot=not patch.days_raw,
+        one_shot_raw=1 if not patch.days_raw else 0,
+        time_utc=f"{patch.hour_utc:02d}:{patch.minute:02d}",
+        time_local_candidate=f"{patch.hour_utc:02d}:{patch.minute:02d}",
+        days_raw=tuple(sorted(patch.days_raw)),
+        days=tuple(Weekday(day).name for day in sorted(patch.days_raw)),
+        portions=patch.portions,
+        # New slot has no prior feeder-owned metadata.
+        enable_audio_raw=0,
+        audio_times=0,
+        skip_end_time=0,
+        opaque_hex="",
+        execution_state=0,
+        sync_time=int(time.time() * 1000),
+    )
 
 
 def validate_plan_transport_fields(plans: tuple[FeederPlan, ...]) -> None:

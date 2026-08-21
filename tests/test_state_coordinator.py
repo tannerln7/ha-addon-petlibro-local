@@ -15,6 +15,7 @@ from state_coordinator import (
     PendingStage,
     PersistentWriteRequest,
     PlanCollectionPredicate,
+    PlanOperation,
     PlanPatch,
     SettingEqualsPredicate,
     build_patched_plan_collection,
@@ -142,7 +143,9 @@ def test_setting_write_ack_then_core_verification_updates_truth():
     first = truth()
     second = replace(
         first,
-        settings=replace(first.settings, values={**first.settings.values, "volume": 80}),
+        settings=replace(
+            first.settings, values={**first.settings.values, "volume": 80}
+        ),
         revisions=replace(first.revisions, core_rev="fnv64:core-2"),
     )
     coordinator, ad, _agent, _logger, mirrored, _availability = ready_coordinator(
@@ -152,8 +155,9 @@ def test_setting_write_ack_then_core_verification_updates_truth():
     request = PersistentWriteRequest(
         control="sound.volume",
         target=80,
-        publisher=lambda _truth: sent.append(80)
-        or CommandReceipt("ATTR_SET_SERVICE", "message-1"),
+        publisher=lambda _truth: (
+            sent.append(80) or CommandReceipt("ATTR_SET_SERVICE", "message-1")
+        ),
         predicate=SettingEqualsPredicate("volume", 80),
     )
 
@@ -184,8 +188,9 @@ def test_api_unavailable_blocks_persistent_writes():
         PersistentWriteRequest(
             control="camera.resolution",
             target="1080p",
-            publisher=lambda _truth: called.append(True)
-            or CommandReceipt("ATTR_SET_SERVICE", "message"),
+            publisher=lambda _truth: (
+                called.append(True) or CommandReceipt("ATTR_SET_SERVICE", "message")
+            ),
             predicate=SettingEqualsPredicate("camera_resolution", "1080p"),
         )
     )
@@ -217,10 +222,10 @@ def test_plan_preflight_uses_fresh_core_and_preserves_opaque_fields():
     request = PersistentWriteRequest(
         control="food.plan_1",
         target=patch,
-        publisher=lambda current_truth: sent.append(
-            current_truth.plans.semantic_records
-        )
-        or CommandReceipt("FEEDING_PLAN_SERVICE", "plan-message"),
+        publisher=lambda current_truth: (
+            sent.append(current_truth.plans.semantic_records)
+            or CommandReceipt("FEEDING_PLAN_SERVICE", "plan-message")
+        ),
         predicate=None,
         requires_fresh_preflight=True,
         plan_patch=patch,
@@ -237,9 +242,11 @@ def test_plan_preflight_uses_fresh_core_and_preserves_opaque_fields():
     assert emitted.enable_audio_raw == 1
     assert emitted.audio_times == 2
 
-    coordinator.on_mqtt_ack(
-        MqttAck("FEEDING_PLAN_SERVICE", "plan-message", True)
-    )
+    initial_plan = initial.plans.semantic_records[0]
+    assert emitted.skip_end_time == initial_plan.skip_end_time
+    assert emitted.opaque_hex == initial_plan.opaque_hex
+
+    coordinator.on_mqtt_ack(MqttAck("FEEDING_PLAN_SERVICE", "plan-message", True))
     ad.run_next_timer()
     assert coordinator.state == FeederState.READY
     assert coordinator.latest_revisions().core_rev == "fnv64:verified"
@@ -260,7 +267,13 @@ def test_plan_predicate_rejects_collateral_mutation_and_missing_plan():
     expected = build_patched_plan_collection(
         baseline, PlanPatch(1, 12, 30, (1, 3, 5), 12)
     )
-    predicate = PlanCollectionPredicate(baseline, expected, 1)
+    predicate = PlanCollectionPredicate(
+        baseline,
+        expected,
+        1,
+        PlanOperation.UPDATE,
+    )
+
     matching = replace(
         current,
         plans=replace(current.plans, count=2, semantic_records=expected),
@@ -294,6 +307,92 @@ def test_plan_predicate_rejects_collateral_mutation_and_missing_plan():
     assert not predicate.matches(missing)
 
 
+def test_plan_predicate_allows_first_plan_creation():
+    patch = PlanPatch(1, 7, 0, (1, 2, 3), 10)
+
+    expected = build_patched_plan_collection(
+        (),
+        patch,
+    )
+
+    predicate = PlanCollectionPredicate(
+        baseline=(),
+        expected=expected,
+        target_plan_id=1,
+        operation=PlanOperation.CREATE,
+    )
+
+    matching = truth()
+    matching = replace(
+        matching,
+        plans=replace(
+            matching.plans,
+            count=1,
+            semantic_records=expected,
+        ),
+    )
+
+    assert predicate.matches(matching)
+
+
+def test_plan_predicate_allows_additional_plan_without_mutating_existing():
+    current = truth()
+    existing = current.plans.semantic_records
+
+    patch = PlanPatch(2, 18, 0, (1, 3, 5), 8)
+
+    expected = build_patched_plan_collection(
+        existing,
+        patch,
+    )
+
+    predicate = PlanCollectionPredicate(
+        baseline=existing,
+        expected=expected,
+        target_plan_id=2,
+        operation=PlanOperation.CREATE,
+    )
+
+    matching = replace(
+        current,
+        plans=replace(
+            current.plans,
+            count=len(expected),
+            semantic_records=expected,
+        ),
+    )
+
+    assert predicate.matches(matching)
+
+
+def test_plan_predicate_rejects_creation_that_removes_existing_plan():
+    current = truth()
+    patch = PlanPatch(2, 18, 0, (1,), 8)
+
+    expected = build_patched_plan_collection(
+        current.plans.semantic_records,
+        patch,
+    )
+
+    predicate = PlanCollectionPredicate(
+        baseline=current.plans.semantic_records,
+        expected=expected,
+        target_plan_id=2,
+        operation=PlanOperation.CREATE,
+    )
+
+    missing_existing = replace(
+        current,
+        plans=replace(
+            current.plans,
+            count=1,
+            semantic_records=(expected[-1],),
+        ),
+    )
+
+    assert not predicate.matches(missing_existing)
+
+
 def test_plan_preflight_failure_does_not_publish_mqtt_command():
     initial = truth()
     coordinator, _ad, _agent, _logger, _mirrored, _availability = ready_coordinator(
@@ -303,8 +402,9 @@ def test_plan_preflight_failure_does_not_publish_mqtt_command():
     request = PersistentWriteRequest(
         control="food.plan_1",
         target=PlanPatch(1, 12, 0, (1,), 10),
-        publisher=lambda _truth: sent.append(True)
-        or CommandReceipt("FEEDING_PLAN_SERVICE", "plan-message"),
+        publisher=lambda _truth: (
+            sent.append(True) or CommandReceipt("FEEDING_PLAN_SERVICE", "plan-message")
+        ),
         predicate=None,
         requires_fresh_preflight=True,
         plan_patch=PlanPatch(1, 12, 0, (1,), 10),
@@ -384,8 +484,10 @@ def test_plan_preflight_runs_after_an_inflight_revision_read_completes():
     request = PersistentWriteRequest(
         control="food.plan_1",
         target=PlanPatch(1, 12, 0, (1,), 10),
-        publisher=lambda current: sent.append(current)
-        or CommandReceipt("FEEDING_PLAN_SERVICE", "plan-message"),
+        publisher=lambda current: (
+            sent.append(current)
+            or CommandReceipt("FEEDING_PLAN_SERVICE", "plan-message")
+        ),
         predicate=None,
         requires_fresh_preflight=True,
         plan_patch=PlanPatch(1, 12, 0, (1,), 10),
@@ -444,7 +546,9 @@ def test_heartbeat_changed_revision_fetches_and_applies_core():
     changed = replace(
         initial,
         revisions=replace(initial.revisions, core_rev="fnv64:changed"),
-        settings=replace(initial.settings, values={**initial.settings.values, "volume": 81}),
+        settings=replace(
+            initial.settings, values={**initial.settings.values, "volume": 81}
+        ),
     )
     agent = FakeAgent([initial, changed])
     agent.revision_value = RevisionSnapshot(
@@ -487,9 +591,7 @@ def test_ack_match_but_persisted_plan_mismatch_applies_feeder_truth():
             plan_patch=patch,
         )
     )
-    coordinator.on_mqtt_ack(
-        MqttAck("FEEDING_PLAN_SERVICE", "plan-message", True)
-    )
+    coordinator.on_mqtt_ack(MqttAck("FEEDING_PLAN_SERVICE", "plan-message", True))
     for _ in range(4):
         ad.run_next_timer()
 
@@ -513,16 +615,12 @@ def test_verification_api_failure_never_returns_coordinator_to_ready():
             StateAgentUnavailable("offline"),
         ]
     )
-    coordinator, ad, _agent, _logger, _mirrored, availability = ready_coordinator(
-        agent
-    )
+    coordinator, ad, _agent, _logger, _mirrored, availability = ready_coordinator(agent)
     coordinator.request_persistent_write(
         PersistentWriteRequest(
             control="sound.volume",
             target=80,
-            publisher=lambda _truth: CommandReceipt(
-                "ATTR_SET_SERVICE", "message-1"
-            ),
+            publisher=lambda _truth: CommandReceipt("ATTR_SET_SERVICE", "message-1"),
             predicate=SettingEqualsPredicate("volume", 80),
         )
     )
@@ -536,11 +634,13 @@ def test_verification_api_failure_never_returns_coordinator_to_ready():
 
 
 def test_sound_verification_failure_logs_only_numeric_raw_setting_changes():
-    initial = truth(settings_raw={
-        "motor_state_u8_0x0e": 2,
-        "sound_switch_u8_0x21": 0,
-        "opaque_text": "before-sensitive-value",
-    })
+    initial = truth(
+        settings_raw={
+            "motor_state_u8_0x0e": 2,
+            "sound_switch_u8_0x21": 0,
+            "opaque_text": "before-sensitive-value",
+        }
+    )
     initial = replace(
         initial,
         settings=replace(
@@ -558,9 +658,7 @@ def test_sound_verification_failure_logs_only_numeric_raw_setting_changes():
         },
     )
     agent = FakeAgent([initial, preflight, mismatch, mismatch, mismatch, mismatch])
-    coordinator, ad, agent, logger, _mirrored, _availability = ready_coordinator(
-        agent
-    )
+    coordinator, ad, agent, logger, _mirrored, _availability = ready_coordinator(agent)
     coordinator.request_persistent_write(
         PersistentWriteRequest(
             control="sound.enable",
@@ -568,16 +666,12 @@ def test_sound_verification_failure_logs_only_numeric_raw_setting_changes():
             publisher=lambda _truth: CommandReceipt(
                 "ATTR_SET_SERVICE", "sound-message"
             ),
-            predicate=SettingEqualsPredicate(
-                "sound_switch", "enabled"
-            ),
+            predicate=SettingEqualsPredicate("sound_switch", "enabled"),
             requires_fresh_preflight=True,
             raw_settings_diagnostics=True,
         )
     )
-    coordinator.on_mqtt_ack(
-        MqttAck("ATTR_SET_SERVICE", "sound-message", True)
-    )
+    coordinator.on_mqtt_ack(MqttAck("ATTR_SET_SERVICE", "sound-message", True))
     for _ in range(4):
         ad.run_next_timer()
 
@@ -589,11 +683,13 @@ def test_sound_verification_failure_logs_only_numeric_raw_setting_changes():
     )
     assert diagnostic == {
         "control": "sound.enable",
-        "changes": [{
-            "field": "sound_switch_u8_0x21",
-            "before": 0,
-            "after": 2,
-        }],
+        "changes": [
+            {
+                "field": "sound_switch_u8_0x21",
+                "before": 0,
+                "after": 2,
+            }
+        ],
     }
     assert "sensitive-value" not in repr(logger.records)
 
@@ -615,9 +711,7 @@ def test_sound_raw_diff_is_logged_when_persistent_switch_matches():
         settings_raw={"sound_switch_u8_0x21": 0},
     )
     agent = FakeAgent([initial, initial, verified])
-    coordinator, ad, _agent, logger, _mirrored, _availability = ready_coordinator(
-        agent
-    )
+    coordinator, ad, _agent, logger, _mirrored, _availability = ready_coordinator(agent)
     coordinator.request_persistent_write(
         PersistentWriteRequest(
             control="sound.enable",
@@ -625,16 +719,12 @@ def test_sound_raw_diff_is_logged_when_persistent_switch_matches():
             publisher=lambda _truth: CommandReceipt(
                 "ATTR_SET_SERVICE", "sound-off-message"
             ),
-            predicate=SettingEqualsPredicate(
-                "sound_switch", "disabled"
-            ),
+            predicate=SettingEqualsPredicate("sound_switch", "disabled"),
             requires_fresh_preflight=True,
             raw_settings_diagnostics=True,
         )
     )
-    coordinator.on_mqtt_ack(
-        MqttAck("ATTR_SET_SERVICE", "sound-off-message", True)
-    )
+    coordinator.on_mqtt_ack(MqttAck("ATTR_SET_SERVICE", "sound-off-message", True))
     ad.run_next_timer()
 
     diagnostic = next(
@@ -642,11 +732,13 @@ def test_sound_raw_diff_is_logged_when_persistent_switch_matches():
         for _level, message, fields in logger.records
         if message == "persistent write raw settings diff"
     )
-    assert diagnostic["changes"] == [{
-        "field": "sound_switch_u8_0x21",
-        "before": 1,
-        "after": 0,
-    }]
+    assert diagnostic["changes"] == [
+        {
+            "field": "sound_switch_u8_0x21",
+            "before": 1,
+            "after": 0,
+        }
+    ]
 
 
 def test_truth_application_guard_suppresses_nested_writeback():
@@ -660,8 +752,9 @@ def test_truth_application_guard_suppresses_nested_writeback():
         request = PersistentWriteRequest(
             control="camera.resolution",
             target="1080p",
-            publisher=lambda _current: attempted.append(True)
-            or CommandReceipt("ATTR_SET_SERVICE", "nested"),
+            publisher=lambda _current: (
+                attempted.append(True) or CommandReceipt("ATTR_SET_SERVICE", "nested")
+            ),
             predicate=SettingEqualsPredicate("camera_resolution", "1080p"),
         )
         assert not holder["coordinator"].request_persistent_write(request)
@@ -736,9 +829,9 @@ def test_setting_predicate_never_verifies_effective_cached_or_runtime_fields():
         ),
     )
 
-    assert not SettingEqualsPredicate(
-        "sound_effective_cached", "enabled"
-    ).matches(current)
+    assert not SettingEqualsPredicate("sound_effective_cached", "enabled").matches(
+        current
+    )
     assert not SettingEqualsPredicate("motor_state_raw", 1).matches(current)
 
 
@@ -760,6 +853,6 @@ def test_matching_persistent_switch_ignores_mismatching_effective_cache():
     )
 
     assert SettingEqualsPredicate("sound_switch", "enabled").matches(current)
-    assert not SettingEqualsPredicate(
-        "sound_effective_cached", "disabled"
-    ).matches(current)
+    assert not SettingEqualsPredicate("sound_effective_cached", "disabled").matches(
+        current
+    )
