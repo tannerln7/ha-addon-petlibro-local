@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.6
+
+fix: support creating new feeding plans from state-agent truth
+
+The feeding plan write path previously assumed all PlanPatch operations
+targeted an existing feeder-owned plan. This caused writes to fail when the
+feeder had no stored plans or when adding a new plan ID.
+
+Update desired-state construction to support plan creation by allowing:
+
+- empty feeder state -> first feeding plan
+- existing plans -> existing plans plus a new feeding plan
+
+Extend PlanCollectionPredicate with explicit CREATE/UPDATE operation modes
+so verification continues enforcing strict state transitions:
+
+- UPDATE preserves existing plan IDs and feeder-owned fields
+- CREATE preserves existing plans while allowing the target plan to appear
+
+Add test coverage for new plan creation, multi-plan additions, and invalid
+creation transitions while preserving existing mutation verification behavior.
+
+
 ## 0.3.2
 
 - Reconstruct Home Assistant dispensing status after AppDaemon startup, feeder
