@@ -149,7 +149,7 @@ class FeederPlan:
     execution_state: int
     sync_time: int
     skip_end_time: int
-    opaque_hex: str
+    opaque_hex: str | None
 
     @classmethod
     def from_dict(cls, data: object, index: int) -> FeederPlan:

@@ -323,12 +323,18 @@ def test_plan_predicate_allows_first_plan_creation():
     )
 
     matching = truth()
+
+    firmware_created_plan = replace(
+        expected[0],
+        opaque_hex="00000000000000000000",
+    )
+
     matching = replace(
         matching,
         plans=replace(
             matching.plans,
             count=1,
-            semantic_records=expected,
+            semantic_records=(firmware_created_plan,),
         ),
     )
 
@@ -353,12 +359,19 @@ def test_plan_predicate_allows_additional_plan_without_mutating_existing():
         operation=PlanOperation.CREATE,
     )
 
+    firmware_created = tuple(
+        replace(plan, opaque_hex="00000000000000000000")
+        if plan.id == patch.plan_id
+        else plan
+        for plan in expected
+    )
+
     matching = replace(
         current,
         plans=replace(
             current.plans,
             count=len(expected),
-            semantic_records=expected,
+            semantic_records=firmware_created,
         ),
     )
 
@@ -391,6 +404,39 @@ def test_plan_predicate_rejects_creation_that_removes_existing_plan():
     )
 
     assert not predicate.matches(missing_existing)
+
+
+def test_plan_predicate_rejects_create_when_semantic_fields_do_not_match():
+    patch = PlanPatch(1, 7, 0, (1, 2, 3), 10)
+
+    expected = build_patched_plan_collection(
+        (),
+        patch,
+    )
+
+    predicate = PlanCollectionPredicate(
+        baseline=(),
+        expected=expected,
+        target_plan_id=1,
+        operation=PlanOperation.CREATE,
+    )
+
+    corrupted = replace(
+        expected[0],
+        portions=11,
+        opaque_hex="00000000000000000000",
+    )
+
+    actual = replace(
+        truth(),
+        plans=replace(
+            truth().plans,
+            count=1,
+            semantic_records=(corrupted,),
+        ),
+    )
+
+    assert not predicate.matches(actual)
 
 
 def test_plan_preflight_failure_does_not_publish_mqtt_command():

@@ -194,11 +194,25 @@ class PlanCollectionPredicate:
         if set(expected_by_id) != set(actual_by_id):
             return False
 
-        return all(
-            actual_by_id[plan_id].stable_fingerprint()
-            == expected_plan.stable_fingerprint()
-            for plan_id, expected_plan in expected_by_id.items()
-        )
+        for plan_id, expected_plan in expected_by_id.items():
+            actual_plan = actual_by_id[plan_id]
+
+            if (
+                self.operation is PlanOperation.CREATE
+                and plan_id == self.target_plan_id
+                and expected_plan.opaque_hex is None
+            ):
+                if (
+                    actual_plan.semantic_fingerprint()
+                    != expected_plan.semantic_fingerprint()
+                ):
+                    return False
+                continue
+
+            if actual_plan.stable_fingerprint() != expected_plan.stable_fingerprint():
+                return False
+
+        return True
 
     def expected_description(self) -> str:
         return _plan_collection_description(self.expected)
@@ -1055,7 +1069,7 @@ def create_plan_from_patch(patch: PlanPatch) -> FeederPlan:
         enable_audio_raw=0,
         audio_times=0,
         skip_end_time=0,
-        opaque_hex="",
+        opaque_hex=None,
         execution_state=0,
         sync_time=int(time.time() * 1000),
     )
